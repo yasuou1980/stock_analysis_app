@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import pandas_ta as ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
@@ -18,6 +17,37 @@ st.set_page_config(
     page_icon="💹",
     layout="wide"
 )
+
+# --- Technical Analysis Functions ---
+def calculate_sma(data, window):
+    """Calculate Simple Moving Average."""
+    return data.rolling(window=window).mean()
+
+def calculate_rsi(data, window=14):
+    """Calculate Relative Strength Index."""
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_stochastic(high, low, close, k_period=14, d_period=3):
+    """Calculate Stochastic Oscillator."""
+    lowest_low = low.rolling(window=k_period).min()
+    highest_high = high.rolling(window=k_period).max()
+    k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
+    d_percent = k_percent.rolling(window=d_period).mean()
+    return k_percent, d_percent
+
+def calculate_macd(data, fast=12, slow=26, signal=9):
+    """Calculate MACD indicator."""
+    exp1 = data.ewm(span=fast).mean()
+    exp2 = data.ewm(span=slow).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=signal).mean()
+    histogram = macd_line - signal_line
+    return macd_line, histogram, signal_line
 
 # --- Helper Functions ---
 def validate_date_range(start_date, end_date):
@@ -270,21 +300,12 @@ data = load_data(ticker, start_date, end_date)
 
 if data is not None and not data.empty:
     try:
-        # Technical Analysis using pandas-ta Strategy
-        MyStrategy = ta.Strategy(
-            name="Custom Strategy",
-            description="SMA, RSI, STOCH and MACD",
-            ta=[
-                {"kind": "sma", "length": short_window, "col_names": "sma_short"},
-                {"kind": "sma", "length": long_window, "col_names": "sma_long"},
-                {"kind": "rsi", "length": rsi_period, "col_names": "rsi"},
-                {"kind": "stoch", "k": stoch_k, "d": stoch_d, "col_names": ("stochk", "stochd")},
-                {"kind": "macd", "fast": macd_fast, "slow": macd_slow, "signal": macd_signal, 
-                 "col_names": ("macd", "macdh", "macds")},
-            ]
-        )
-        
-        data.ta.strategy(MyStrategy)
+        # Calculate technical indicators
+        data['sma_short'] = calculate_sma(data['close'], short_window)
+        data['sma_long'] = calculate_sma(data['close'], long_window)
+        data['rsi'] = calculate_rsi(data['close'], rsi_period)
+        data['stochk'], data['stochd'] = calculate_stochastic(data['high'], data['low'], data['close'], stoch_k, stoch_d)
+        data['macd'], data['macdh'], data['macds'] = calculate_macd(data['close'], macd_fast, macd_slow, macd_signal)
         
         # Remove rows with NaN values from indicators
         initial_rows = len(data)
@@ -318,13 +339,10 @@ if data is not None and not data.empty:
         rsi_val = latest_data['rsi']
         if rsi_val > 70:
             rsi_signal = "買われ過ぎ"
-            rsi_color = "inverse"
         elif rsi_val < 30:
             rsi_signal = "売られ過ぎ"
-            rsi_color = "normal"
         else:
             rsi_signal = "中立"
-            rsi_color = "off"
         cols[2].metric("RSI", f"{rsi_val:.1f}", rsi_signal)
 
         # Stochastic Signal
@@ -339,7 +357,6 @@ if data is not None and not data.empty:
 
         # Composite Signal
         composite_signal = latest_data['composite_signal']
-        signal_color = "normal" if composite_signal == "BUY" else ("inverse" if composite_signal == "SELL" else "off")
         cols[4].metric("総合シグナル", composite_signal)
 
         # Backtesting

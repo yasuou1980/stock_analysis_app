@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import pandas_ta as ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
@@ -17,37 +18,6 @@ st.set_page_config(
     page_icon="💹",
     layout="wide"
 )
-
-# --- Technical Analysis Functions ---
-def calculate_sma(data, window):
-    """Calculate Simple Moving Average."""
-    return data.rolling(window=window).mean()
-
-def calculate_rsi(data, window=14):
-    """Calculate Relative Strength Index."""
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def calculate_stochastic(high, low, close, k_period=14, d_period=3):
-    """Calculate Stochastic Oscillator."""
-    lowest_low = low.rolling(window=k_period).min()
-    highest_high = high.rolling(window=k_period).max()
-    k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
-    d_percent = k_percent.rolling(window=d_period).mean()
-    return k_percent, d_percent
-
-def calculate_macd(data, fast=12, slow=26, signal=9):
-    """Calculate MACD indicator."""
-    exp1 = data.ewm(span=fast).mean()
-    exp2 = data.ewm(span=slow).mean()
-    macd_line = exp1 - exp2
-    signal_line = macd_line.ewm(span=signal).mean()
-    histogram = macd_line - signal_line
-    return macd_line, histogram, signal_line
 
 # --- Helper Functions ---
 def validate_date_range(start_date, end_date):
@@ -214,43 +184,28 @@ def load_data(_ticker, start, end):
         if data.empty:
             raise ValueError(f"ティッカー {_ticker} のデータが見つかりません。シンボルが正しいか確認してください。")
 
-        # Flatten MultiIndex columns if they exist
+        # Handle potential MultiIndex columns from yfinance
         if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.droplevel(0)
+            # When a MultiIndex is returned, the first level is usually the OHLCV data.
+            data.columns = data.columns.get_level_values(0)
 
-        # Standardize column names to lowercase
-        data.columns = [str(col).lower().strip() for col in data.columns]
+        # Standardize column names to lowercase for consistent access
+        data.columns = [col.lower() for col in data.columns]
 
-        # Definitive Renaming Logic
+        # Ensure all required columns are present after download and standardization.
         required_cols = ['open', 'high', 'low', 'close', 'volume']
-        rename_map = {}
-        current_cols = data.columns.tolist()
-
-        for req_col in required_cols:
-            found = False
-            for col in current_cols:
-                if col == req_col or col.startswith(f"{req_col}_"):
-                    rename_map[col] = req_col
-                    found = True
-                    break
-            if not found:
-                raise ValueError(f"必要な列 '{req_col}' が見つかりません。利用可能な列: {current_cols}")
-        
-        data.rename(columns=rename_map, inplace=True)
+        missing_cols = [col for col in required_cols if col not in data.columns]
+        if missing_cols:
+            raise ValueError(f"必要な列が見つかりません: {missing_cols}。利用可能な列: {data.columns.tolist()}")
 
         # Data quality checks
         if len(data) < 50:
-            raise ValueError("データ量が不足しています。より長い期間を選択してください。")
+            st.warning("データ量が不足しています。より長い期間を選択してください。")
         
-        # Remove rows with all NaN values
-        data.dropna(how='all', inplace=True)
+        # Remove rows with any NaN values which can interfere with TA calculations.
+        data.dropna(inplace=True)
         
-        # Check for required columns
-        missing_cols = [col for col in required_cols if col not in data.columns]
-        if missing_cols:
-            raise ValueError(f"必要な列が不足しています: {missing_cols}")
-
-        logger.info(f"Successfully loaded {len(data)} rows of data")
+        logger.info(f"Successfully loaded and cleaned {len(data)} rows of data")
         return data
         
     except Exception as e:
@@ -300,12 +255,21 @@ data = load_data(ticker, start_date, end_date)
 
 if data is not None and not data.empty:
     try:
-        # Calculate technical indicators
-        data['sma_short'] = calculate_sma(data['close'], short_window)
-        data['sma_long'] = calculate_sma(data['close'], long_window)
-        data['rsi'] = calculate_rsi(data['close'], rsi_period)
-        data['stochk'], data['stochd'] = calculate_stochastic(data['high'], data['low'], data['close'], stoch_k, stoch_d)
-        data['macd'], data['macdh'], data['macds'] = calculate_macd(data['close'], macd_fast, macd_slow, macd_signal)
+        # Technical Analysis using pandas-ta Strategy
+        MyStrategy = ta.Strategy(
+            name="Custom Strategy",
+            description="SMA, RSI, STOCH and MACD",
+            ta=[
+                {"kind": "sma", "length": short_window, "col_names": "sma_short"},
+                {"kind": "sma", "length": long_window, "col_names": "sma_long"},
+                {"kind": "rsi", "length": rsi_period, "col_names": "rsi"},
+                {"kind": "stoch", "k": stoch_k, "d": stoch_d, "col_names": ("stochk", "stochd")},
+                {"kind": "macd", "fast": macd_fast, "slow": macd_slow, "signal": macd_signal, 
+                 "col_names": ("macd", "macdh", "macds")},
+            ]
+        )
+        
+        data.ta.strategy(MyStrategy)
         
         # Remove rows with NaN values from indicators
         initial_rows = len(data)
@@ -339,10 +303,13 @@ if data is not None and not data.empty:
         rsi_val = latest_data['rsi']
         if rsi_val > 70:
             rsi_signal = "買われ過ぎ"
+            rsi_color = "inverse"
         elif rsi_val < 30:
             rsi_signal = "売られ過ぎ"
+            rsi_color = "normal"
         else:
             rsi_signal = "中立"
+            rsi_color = "off"
         cols[2].metric("RSI", f"{rsi_val:.1f}", rsi_signal)
 
         # Stochastic Signal
@@ -357,6 +324,7 @@ if data is not None and not data.empty:
 
         # Composite Signal
         composite_signal = latest_data['composite_signal']
+        signal_color = "normal" if composite_signal == "BUY" else ("inverse" if composite_signal == "SELL" else "off")
         cols[4].metric("総合シグナル", composite_signal)
 
         # Backtesting
@@ -478,5 +446,7 @@ else:
     st.warning("有効なティッカーと日付範囲を選択して分析を開始してください。")
 
 # Footer
+st.markdown("---")
+st.markdown("⚠️ **免責事項**: このツールは教育目的のみで提供されています。投資判断は自己責任で行ってください。")
 st.markdown("---")
 st.markdown("⚠️ **免責事項**: このツールは教育目的のみで提供されています。投資判断は自己責任で行ってください。")

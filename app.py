@@ -7,446 +7,287 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import numpy as np
 import logging
+import json
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- Page Configuration ---
+# --- Page and Logging Configuration ---
 st.set_page_config(
-    page_title="SOXL/SOXS Investment Strategy",
-    page_icon="💹",
+    page_title="プロフェッショナル株式戦略分析",
+    page_icon="🏆",
     layout="wide"
 )
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- Helper Functions ---
+# --- Helper Functions & Classes ---
+
 def validate_date_range(start_date, end_date):
-    """Validate date range inputs."""
+    """日付範囲の入力を検証する"""
     if start_date >= end_date:
         st.error("開始日は終了日より前の日付を選択してください。")
         return False
-    
-    if (end_date - start_date).days < 100:
-        st.warning("技術指標の計算には最低100日のデータが推奨されます。")
-    
     return True
 
-def generate_composite_signal(data):
-    """Generate composite trading signals based on multiple indicators."""
-    signals = []
-    
-    for i in range(len(data)):
-        signal = "HOLD"
-        score = 0
-        
-        # SMA Signal (Weight: 2)
-        if data.iloc[i]['sma_short'] > data.iloc[i]['sma_long']:
-            score += 2
-        else:
-            score -= 2
-            
-        # RSI Signal (Weight: 1)
-        rsi_val = data.iloc[i]['rsi']
-        if rsi_val < 30:  # Oversold - Buy signal
-            score += 1
-        elif rsi_val > 70:  # Overbought - Sell signal
-            score -= 1
-            
-        # Stochastic Signal (Weight: 1)
-        stoch_val = data.iloc[i]['stochk']
-        if stoch_val < 20:  # Oversold
-            score += 1
-        elif stoch_val > 80:  # Overbought
-            score -= 1
-            
-        # MACD Signal (Weight: 2)
-        if data.iloc[i]['macdh'] > 0:
-            score += 2
-        else:
-            score -= 2
-            
-        # Generate final signal
-        if score >= 3:
-            signal = "BUY"
-        elif score <= -3:
-            signal = "SELL"
-            
-        signals.append(signal)
-    
-    return signals
+def validate_data_quality(data):
+    """データ品質の包括的チェック"""
+    issues = []
+    if (data['high'] < data['low']).any():
+        issues.append("⚠️ 価格データに矛盾があります（高値 < 安値）")
+    if 'volume' in data and (data['volume'] == 0).sum() > len(data) * 0.1:
+        issues.append("⚠️ 出来高0の日が10%以上あります")
+    price_changes = data['close'].pct_change().abs()
+    extreme_gaps = (price_changes > 0.2).sum()
+    if extreme_gaps > 0:
+        issues.append(f"⚠️ {extreme_gaps}日に20%以上の価格ギャップがあります")
+    return issues
 
-def backtest_strategy(data, initial_capital=10000):
-    """Perform backtesting on the trading strategy."""
-    if data.empty:
-        return None
-    
-    portfolio = {
-        'cash': initial_capital,
-        'shares': 0,
-        'portfolio_value': [],
-        'trades': [],
-        'positions': []
-    }
-    
-    buy_and_hold_shares = initial_capital / data.iloc[0]['close']
-    buy_and_hold_values = []
-    
-    for i in range(len(data)):
-        current_price = data.iloc[i]['close']
-        current_signal = data.iloc[i]['composite_signal']
-        current_date = data.index[i]
-        
-        # Calculate current portfolio value
-        current_portfolio_value = portfolio['cash'] + (portfolio['shares'] * current_price)
-        portfolio['portfolio_value'].append(current_portfolio_value)
-        
-        # Buy and hold benchmark
-        buy_and_hold_value = buy_and_hold_shares * current_price
-        buy_and_hold_values.append(buy_and_hold_value)
-        
-        # Execute trades based on signals
-        if current_signal == "BUY" and portfolio['shares'] == 0 and portfolio['cash'] > current_price:
-            # Buy signal - enter position
-            shares_to_buy = int(portfolio['cash'] // current_price)
-            if shares_to_buy > 0:
-                cost = shares_to_buy * current_price
-                portfolio['shares'] = shares_to_buy
-                portfolio['cash'] -= cost
-                portfolio['trades'].append({
-                    'date': current_date,
-                    'action': 'BUY',
-                    'shares': shares_to_buy,
-                    'price': current_price,
-                    'value': cost
-                })
-                
-        elif current_signal == "SELL" and portfolio['shares'] > 0:
-            # Sell signal - exit position
-            revenue = portfolio['shares'] * current_price
-            portfolio['trades'].append({
-                'date': current_date,
-                'action': 'SELL',
-                'shares': portfolio['shares'],
-                'price': current_price,
-                'value': revenue
-            })
-            portfolio['cash'] += revenue
-            portfolio['shares'] = 0
-    
-    # Calculate performance metrics
-    if len(portfolio['portfolio_value']) > 0:
-        final_value = portfolio['portfolio_value'][-1]
-        total_return = (final_value - initial_capital) / initial_capital * 100
-        
-        # Calculate maximum drawdown
-        portfolio_values = np.array(portfolio['portfolio_value'])
-        running_max = np.maximum.accumulate(portfolio_values)
-        drawdown = (portfolio_values - running_max) / running_max * 100
-        max_drawdown = np.min(drawdown)
-        
-        # Buy and hold performance
-        buy_and_hold_return = (buy_and_hold_values[-1] - initial_capital) / initial_capital * 100
-        
-        # Calculate Sharpe ratio (simplified - assuming daily data)
-        returns = np.diff(portfolio_values) / portfolio_values[:-1]
-        if len(returns) > 0 and np.std(returns) > 0:
-            sharpe_ratio = np.mean(returns) / np.std(returns) * np.sqrt(252)  # Annualized
-        else:
-            sharpe_ratio = 0
-        
-        return {
-            'portfolio_values': portfolio['portfolio_value'],
-            'buy_and_hold_values': buy_and_hold_values,
-            'trades': portfolio['trades'],
-            'final_value': final_value,
-            'total_return': total_return,
-            'buy_and_hold_return': buy_and_hold_return,
-            'max_drawdown': max_drawdown,
-            'sharpe_ratio': sharpe_ratio,
-            'num_trades': len(portfolio['trades'])
-        }
-    
-    return None
+def save_settings(settings, filename="settings.json"):
+    """現在の設定をファイルに保存する"""
+    settings_serializable = {k: v.isoformat() if isinstance(v, datetime.date) else v for k, v in settings.items()}
+    with open(filename, 'w') as f:
+        json.dump(settings_serializable, f, indent=4)
+    st.sidebar.success(f"設定を {filename} に保存しました。")
 
-# --- Data Loading and Caching ---
+def load_settings(filename="settings.json"):
+    """ファイルから設定を読み込む"""
+    try:
+        with open(filename, 'r') as f:
+            settings = json.load(f)
+            for key, value in settings.items():
+                if key in ['start_date', 'end_date'] and isinstance(value, str):
+                    settings[key] = datetime.fromisoformat(value).date()
+            return settings
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        st.sidebar.error(f"設定ファイルの読み込みに失敗しました: {e}")
+        return {}
+
+# --- Data Caching and Processing ---
+
 @st.cache_data
 def load_data(_ticker, start, end):
-    """Loads and robustly cleans historical stock data from Yahoo Finance."""
+    """Yahoo Financeから株価データを読み込む"""
     try:
-        # Validate inputs
-        if not _ticker or not isinstance(_ticker, str):
-            raise ValueError("無効なティッカーシンボルです。")
-        
-        logger.info(f"Loading data for {_ticker} from {start} to {end}")
-        
         data = yf.download(_ticker, start=start, end=end, auto_adjust=True, progress=False)
-        
         if data.empty:
-            raise ValueError(f"ティッカー {_ticker} のデータが見つかりません。シンボルが正しいか確認してください。")
-
-        # Handle potential MultiIndex columns from yfinance
-        if isinstance(data.columns, pd.MultiIndex):
-            # When a MultiIndex is returned, the first level is usually the OHLCV data.
-            data.columns = data.columns.get_level_values(0)
-
-        # Standardize column names to lowercase for consistent access
+            st.error(f"ティッカー {_ticker} のデータが見つかりません。")
+            return None
         data.columns = [col.lower() for col in data.columns]
-
-        # Ensure all required columns are present after download and standardization.
-        required_cols = ['open', 'high', 'low', 'close', 'volume']
-        missing_cols = [col for col in required_cols if col not in data.columns]
-        if missing_cols:
-            raise ValueError(f"必要な列が見つかりません: {missing_cols}。利用可能な列: {data.columns.tolist()}")
-
-        # Data quality checks
-        if len(data) < 50:
-            st.warning("データ量が不足しています。より長い期間を選択してください。")
-        
-        # Remove rows with any NaN values which can interfere with TA calculations.
         data.dropna(inplace=True)
-        
-        logger.info(f"Successfully loaded and cleaned {len(data)} rows of data")
         return data
-        
     except Exception as e:
-        logger.error(f"Data loading error: {str(e)}")
-        st.error(f"データの読み込み中にエラーが発生しました: {str(e)}")
+        st.error(f"データの読み込みエラー: {e}")
         return None
 
-# --- Sidebar for User Input ---
+@st.cache_data
+def calculate_indicators_and_signals(_data, params):
+    """技術指標、シグナル、およびリスク管理指標を計算する"""
+    data = _data.copy()
+    strategy = ta.Strategy(name="Custom Strategy", ta=[
+        {"kind": "sma", "length": params['short_window'], "col_names": "sma_short"},
+        {"kind": "sma", "length": params['long_window'], "col_names": "sma_long"},
+        {"kind": "rsi", "length": params['rsi_period'], "col_names": "rsi"},
+        {"kind": "macd", "fast": params['macd_fast'], "slow": params['macd_slow'], "signal": params['macd_signal'], "col_names": ("macd", "macdh", "macds")},
+    ])
+    data.ta.strategy(strategy)
+    data['volatility'] = data['close'].pct_change().rolling(window=30).std().bfill()
+    scores = (np.where(data['sma_short'] > data['sma_long'], 2, -2) +
+              np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) +
+              np.where(data['macdh'] > 0, 2, -2))
+    data['composite_signal'] = np.select([scores >= 3.5, scores <= -3.5], ["BUY", "SELL"], default="HOLD")
+    data.dropna(inplace=True)
+    return data
+
+# --- Analysis & Calculation Functions ---
+def check_alerts(latest_data):
+    """重要なシグナルを検出し、アラートリストを返す"""
+    alerts = []
+    if 'rsi' in latest_data and latest_data['rsi'] < 25:
+        alerts.append(f"🔴 RSI ({latest_data['rsi']:.1f}) が極度の売られ過ぎ水準です")
+    elif 'rsi' in latest_data and latest_data['rsi'] > 75:
+        alerts.append(f"🟢 RSI ({latest_data['rsi']:.1f}) が極度の買われ過ぎ水準です")
+    
+    if 'composite_signal' in latest_data and latest_data['composite_signal'] != 'HOLD':
+        alerts.append(f"📊 強い「{latest_data['composite_signal']}」シグナルが発生中です")
+    return alerts
+
+def safe_calculate_signal_strength(row):
+    """エラー処理を含むシグナル強度計算"""
+    try:
+        if pd.isna(row['sma_long']) or row['sma_long'] == 0: return 50
+        strength = 50
+        sma_divergence = (row['sma_short'] - row['sma_long']) / row['sma_long'] * 100
+        strength += min(max(sma_divergence * 2, -25), 25)
+        if not pd.isna(row['rsi']):
+            if row['rsi'] < 30: strength += (30 - row['rsi']) * 0.5
+            elif row['rsi'] > 70: strength -= (row['rsi'] - 70) * 0.5
+        return max(0, min(100, strength))
+    except Exception as e:
+        logger.warning(f"Signal strength calculation error: {e}")
+        return 50
+
+def calculate_position_size(price, volatility, portfolio_value):
+    """ボラティリティベースのポジションサイズを計算"""
+    if volatility == 0: return 0
+    target_risk, max_position_ratio = 0.02, 0.9 # 1取引のリスク2%、最大レバレッジなし(資金の90%まで)
+    size_in_currency = (portfolio_value * target_risk) / volatility
+    return min(size_in_currency / price, (portfolio_value * max_position_ratio) / price)
+
+@st.cache_data
+def backtest_strategy(_data, initial_capital, commission_rate, slippage):
+    """ポジションサイジングを導入した高度なバックテスト"""
+    portfolio = {'cash': initial_capital, 'shares': 0}
+    portfolio_values = []
+    trades = []
+    for i in range(len(_data)):
+        row = _data.iloc[i]
+        current_portfolio_value = portfolio['cash'] + (portfolio['shares'] * row['close'])
+        portfolio_values.append(current_portfolio_value)
+        if row['composite_signal'] == "BUY" and portfolio['shares'] == 0:
+            buy_price = row['close'] * (1 + slippage)
+            shares_to_buy = calculate_position_size(buy_price, row['volatility'], current_portfolio_value)
+            cost = shares_to_buy * buy_price * (1 + commission_rate)
+            if shares_to_buy > 0 and portfolio['cash'] >= cost:
+                portfolio.update({'shares': shares_to_buy, 'cash': portfolio['cash'] - cost})
+                trades.append({'date': _data.index[i], 'action': 'BUY', 'shares': shares_to_buy, 'price': buy_price, 'value': cost})
+        elif row['composite_signal'] == "SELL" and portfolio['shares'] > 0:
+            sell_price = row['close'] * (1 - slippage)
+            revenue = portfolio['shares'] * sell_price * (1 - commission_rate)
+            trades.append({'date': _data.index[i], 'action': 'SELL', 'shares': portfolio['shares'], 'price': sell_price, 'value': revenue})
+            portfolio.update({'shares': 0, 'cash': portfolio['cash'] + revenue})
+    return {'portfolio_values': portfolio_values, 'dates': _data.index, 'trades': trades}
+
+@st.cache_data
+def calculate_performance_metrics(_portfolio_values, _dates):
+    """パフォーマンス指標の計算を分離してキャッシュ"""
+    if len(_portfolio_values) < 2: return {}
+    returns = pd.Series(_portfolio_values, index=_dates).pct_change().dropna()
+    if returns.empty: return {}
+    
+    total_return = (_portfolio_values[-1] / _portfolio_values[0] - 1) * 100
+    pv_arr = np.array(_portfolio_values)
+    max_dd = np.min((pv_arr - np.maximum.accumulate(pv_arr)) / np.maximum.accumulate(pv_arr)) * 100 if np.maximum.accumulate(pv_arr).any() else 0
+    sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0
+    volatility = returns.std() * np.sqrt(252) * 100
+    var_95 = returns.quantile(0.05) * 100
+    skew = returns.skew()
+    kurt = returns.kurtosis()
+    
+    return {'total_return': total_return, 'max_drawdown': max_dd, 'sharpe_ratio': sharpe, 
+            'volatility': volatility, 'var_95': var_95, 'skewness': skew, 'kurtosis': kurt}
+
+def calculate_trade_metrics(trades_df):
+    """取引の詳細分析"""
+    if trades_df.empty: return {}
+    buys = trades_df[trades_df['action'] == 'BUY']
+    sells = trades_df[trades_df['action'] == 'SELL']
+    if buys.empty or sells.empty: return {}
+    hold_periods = [(sells.iloc[i]['date'] - buys.iloc[i]['date']).days for i in range(min(len(buys), len(sells)))]
+    if not hold_periods: return {}
+    return {'avg_hold_days': np.mean(hold_periods), 'max_hold_days': np.max(hold_periods), 'min_hold_days': np.min(hold_periods)}
+
+# --- Sidebar UI ---
 st.sidebar.title("設定")
-ticker = st.sidebar.selectbox(
-    "ティッカー",
-    ("SOXL", "SOXS"),
-    index=0
-)
 
-# Default date range: last 2 years
+# プリセット定義とセッションステート初期化
+PRESETS = {
+    "スイングトレード": {'short_window': 20, 'long_window': 50, 'rsi_period': 14, 'macd_fast': 12, 'macd_slow': 26, 'macd_signal': 9},
+    "長期投資": {'short_window': 50, 'long_window': 200, 'rsi_period': 20, 'macd_fast': 20, 'macd_slow': 40, 'macd_signal': 10}
+}
+if 'params' not in st.session_state:
+    st.session_state.params = PRESETS["スイングトレード"]
+
+# UIウィジェット
+ticker = st.sidebar.selectbox("ティッカー", ("SOXL", "SOXS", "NVDA", "AMD", "TSM"), index=0)
 end_date = datetime.now().date()
-start_date = end_date - timedelta(days=2*365)
-
-start_date = st.sidebar.date_input("開始日", start_date)
+start_date = st.sidebar.date_input("開始日", end_date - timedelta(days=3*365))
 end_date = st.sidebar.date_input("終了日", end_date)
 
-# Validate date range
-if not validate_date_range(start_date, end_date):
-    st.stop()
+preset_choice = st.sidebar.selectbox("設定プリセット", list(PRESETS.keys()), index=0)
+if preset_choice: st.session_state.params = PRESETS[preset_choice]
 
 st.sidebar.header("技術分析設定")
-# Technical analysis parameters with validation
-short_window = st.sidebar.slider("短期SMA期間", min_value=5, max_value=50, value=25, step=1)
-long_window = st.sidebar.slider("長期SMA期間", min_value=short_window+5, max_value=200, value=75, step=1)
-rsi_period = st.sidebar.slider("RSI期間", min_value=7, max_value=30, value=14, step=1)
-stoch_k = st.sidebar.slider("ストキャスティクス %K", min_value=5, max_value=30, value=14, step=1)
-stoch_d = st.sidebar.slider("ストキャスティクス %D", min_value=2, max_value=10, value=3, step=1)
-macd_fast = st.sidebar.slider("MACD短期", min_value=5, max_value=25, value=12, step=1)
-macd_slow = st.sidebar.slider("MACD長期", min_value=macd_fast+5, max_value=50, value=26, step=1)
-macd_signal = st.sidebar.slider("MACDシグナル", min_value=5, max_value=15, value=9, step=1)
+params_config = {
+    'short_window': ('短期SMA', 5, 50, 20), 'long_window': ('長期SMA', 55, 200, 50), 
+    'rsi_period': ('RSI期間', 7, 30, 14), 'macd_fast': ('MACD短期', 5, 25, 12), 
+    'macd_slow': ('MACD長期', 26, 50, 26), 'macd_signal': ('MACDシグナル', 5, 15, 9)
+}
+params = {key: st.sidebar.slider(label.capitalize(), min_val, max_val, st.session_state.params.get(key, def_val)) for key, (label, min_val, max_val, def_val) in params_config.items()}
+st.session_state.params = params
 
 st.sidebar.header("バックテスト設定")
-initial_capital = st.sidebar.number_input("初期資金 ($)", min_value=1000, max_value=1000000, value=10000, step=1000)
+initial_capital = st.sidebar.number_input("初期資金 ($)", 1000, 1000000, 10000, 1000)
+commission_rate = st.sidebar.slider("取引手数料 (%)", 0.0, 1.0, 0.1, 0.01) / 100
+slippage = st.sidebar.slider("スリッページ (%)", 0.0, 1.0, 0.05, 0.01) / 100
+
+st.sidebar.header("設定管理")
+if st.sidebar.button("設定保存"): save_settings({**params, 'ticker': ticker, 'start_date': start_date, 'end_date': end_date})
+if st.sidebar.button("設定読込"):
+    if loaded := load_settings(): 
+        st.session_state.params.update({k: loaded[k] for k in params if k in loaded})
+        st.rerun()
 
 # --- Main Application ---
-st.title(f"{ticker} 株式分析")
-st.markdown("技術指標に基づく取引シグナルの生成とバックテスト機能を備えた投資分析ツール")
+st.title(f"プロフェッショナル株式戦略分析: {ticker}")
 
-# Load data
-data = load_data(ticker, start_date, end_date)
+raw_data = load_data(ticker, start_date, end_date)
+if raw_data is None or not validate_date_range(start_date, end_date): st.stop()
+if quality_issues := validate_data_quality(raw_data):
+    with st.expander("⚠️ データ品質の警告", expanded=True): [st.warning(issue) for issue in quality_issues]
 
-if data is not None and not data.empty:
-    try:
-        # Technical Analysis using pandas-ta Strategy
-        MyStrategy = ta.Strategy(
-            name="Custom Strategy",
-            description="SMA, RSI, STOCH and MACD",
-            ta=[
-                {"kind": "sma", "length": short_window, "col_names": "sma_short"},
-                {"kind": "sma", "length": long_window, "col_names": "sma_long"},
-                {"kind": "rsi", "length": rsi_period, "col_names": "rsi"},
-                {"kind": "stoch", "k": stoch_k, "d": stoch_d, "col_names": ("stochk", "stochd")},
-                {"kind": "macd", "fast": macd_fast, "slow": macd_slow, "signal": macd_signal, 
-                 "col_names": ("macd", "macdh", "macds")},
-            ]
-        )
-        
-        data.ta.strategy(MyStrategy)
-        
-        # Remove rows with NaN values from indicators
-        initial_rows = len(data)
-        data.dropna(inplace=True)
-        final_rows = len(data)
-        
-        if final_rows < initial_rows * 0.7:  # If we lost more than 30% of data
-            st.warning(f"技術指標の計算により {initial_rows - final_rows} 行のデータが除外されました。")
-        
-        if data.empty:
-            st.error("技術指標の計算後にデータが残りませんでした。期間を長くするか、パラメータを調整してください。")
-            st.stop()
-        
-        # Generate composite signals
-        data['composite_signal'] = generate_composite_signal(data)
-        
-        # Current Status
-        st.header("現在のシグナル")
-        latest_data = data.iloc[-1]
-        
-        cols = st.columns(5)
-        
-        # Current Price
-        cols[0].metric("現在価格", f"${latest_data['close']:.2f}")
-        
-        # SMA Signal
-        sma_signal = "ゴールデンクロス (買い)" if latest_data['sma_short'] > latest_data['sma_long'] else "デッドクロス (売り)"
-        cols[1].metric("SMAシグナル", sma_signal)
+data = calculate_indicators_and_signals(raw_data, params)
+if data.empty: st.error("分析可能なデータがありません。期間やパラメータを調整してください。"); st.stop()
 
-        # RSI Signal
-        rsi_val = latest_data['rsi']
-        if rsi_val > 70:
-            rsi_signal = "買われ過ぎ"
-            rsi_color = "inverse"
-        elif rsi_val < 30:
-            rsi_signal = "売られ過ぎ"
-            rsi_color = "normal"
-        else:
-            rsi_signal = "中立"
-            rsi_color = "off"
-        cols[2].metric("RSI", f"{rsi_val:.1f}", rsi_signal)
+latest = data.iloc[-1]
+if alerts := check_alerts(latest):
+    st.subheader("🚨 重要アラート"); [st.info(alert) for alert in alerts]
 
-        # Stochastic Signal
-        stoch_val = latest_data['stochk']
-        if stoch_val > 80:
-            stoch_signal = "買われ過ぎ"
-        elif stoch_val < 20:
-            stoch_signal = "売られ過ぎ"
-        else:
-            stoch_signal = "中立"
-        cols[3].metric("ストキャスティクス %K", f"{stoch_val:.1f}", stoch_signal)
+st.header("現在の市場状況")
+cols = st.columns([1.5, 1.5, 1.5, 2])
+cols[0].metric("現在価格", f"${latest['close']:.2f}")
+cols[1].metric("総合シグナル", latest['composite_signal'])
+cols[2].metric("RSI", f"{latest['rsi']:.1f}")
+with cols[3]: st.markdown("**シグナル強度**"); st.progress(int(safe_calculate_signal_strength(latest)))
 
-        # Composite Signal
-        composite_signal = latest_data['composite_signal']
-        signal_color = "normal" if composite_signal == "BUY" else ("inverse" if composite_signal == "SELL" else "off")
-        cols[4].metric("総合シグナル", composite_signal)
+st.header("バックテスト分析")
+results = backtest_strategy(data, initial_capital, commission_rate, slippage)
+metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
 
-        # Backtesting
-        st.header("バックテスト結果")
-        
-        with st.spinner("バックテストを実行中..."):
-            backtest_results = backtest_strategy(data, initial_capital)
-        
-        if backtest_results:
-            # Performance metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            col1.metric(
-                "総リターン", 
-                f"{backtest_results['total_return']:.2f}%",
-                f"{backtest_results['total_return'] - backtest_results['buy_and_hold_return']:.2f}% vs B&H"
-            )
-            col2.metric("最大ドローダウン", f"{backtest_results['max_drawdown']:.2f}%")
-            col3.metric("シャープレシオ", f"{backtest_results['sharpe_ratio']:.2f}")
-            col4.metric("取引回数", backtest_results['num_trades'])
-            
-            # Performance comparison
-            st.subheader("戦略 vs バイアンドホールド")
-            perf_data = pd.DataFrame({
-                '戦略': backtest_results['portfolio_values'],
-                'バイアンドホールド': backtest_results['buy_and_hold_values']
-            }, index=data.index)
-            
-            fig_perf = go.Figure()
-            fig_perf.add_trace(go.Scatter(x=perf_data.index, y=perf_data['戦略'], 
-                                        mode='lines', name='戦略', line=dict(color='blue')))
-            fig_perf.add_trace(go.Scatter(x=perf_data.index, y=perf_data['バイアンドホールド'], 
-                                        mode='lines', name='バイアンドホールド', line=dict(color='gray')))
-            fig_perf.update_layout(
-                title="パフォーマンス比較",
-                xaxis_title="日付",
-                yaxis_title="ポートフォリオ価値 ($)",
-                height=400
-            )
-            st.plotly_chart(fig_perf, use_container_width=True)
-            
-            # Trade history
-            if backtest_results['trades']:
-                st.subheader("取引履歴")
-                trades_df = pd.DataFrame(backtest_results['trades'])
-                trades_df['date'] = pd.to_datetime(trades_df['date']).dt.date
-                st.dataframe(trades_df, use_container_width=True)
+if metrics:
+    tab1, tab2, tab3 = st.tabs(["パフォーマンス概要", "リスク＆取引分析", "詳細チャート"])
+    with tab1:
+        st.subheader("パフォーマンスサマリー")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("最終リターン", f"{metrics.get('total_return', 0):.2f}%")
+        c2.metric("最大ドローダウン", f"{metrics.get('max_drawdown', 0):.2f}%")
+        c3.metric("シャープレシオ", f"{metrics.get('sharpe_ratio', 0):.2f}")
+        st.line_chart(pd.DataFrame({'戦略ポートフォリオ': results['portfolio_values']}, index=results['dates']))
 
-        # Price Chart & Technical Indicators
-        st.header("価格チャートと技術指標")
+    with tab2:
+        st.subheader("リスクプロファイル")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("年率ボラティリティ", f"{metrics.get('volatility', 0):.2f}%")
+        c2.metric("VaR 95% (日次)", f"{metrics.get('var_95', 0):.2f}%")
+        c3.metric("歪度 (Skewness)", f"{metrics.get('skewness', 0):.2f}", help="0より大きいと右に長い裾野（大きな利益が時々）、小さいと左に長い裾野（大きな損失が時々）")
+        c4.metric("尖度 (Kurtosis)", f"{metrics.get('kurtosis', 0):.2f}", help="3より大きいと正規分布より尖った分布（テールリスク大）")
 
-        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                            row_heights=[0.5, 0.15, 0.15, 0.2])
+        st.subheader("取引詳細分析")
+        trades_df = pd.DataFrame(results['trades'])
+        trade_metrics = calculate_trade_metrics(trades_df)
+        if trade_metrics:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("平均保有日数", f"{trade_metrics.get('avg_hold_days', 0):.1f}日")
+            c2.metric("最大保有日数", f"{trade_metrics.get('max_hold_days', 0):.0f}日")
+            c3.metric("最小保有日数", f"{trade_metrics.get('min_hold_days', 0):.0f}日")
 
-        # Price and SMA with signals
-        fig.add_trace(go.Candlestick(x=data.index, open=data['open'], high=data['high'],
-                                     low=data['low'], close=data['close'], name='価格'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['sma_short'], mode='lines', 
-                                name=f'SMA {short_window}', line=dict(color='orange')), row=1, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['sma_long'], mode='lines', 
-                                name=f'SMA {long_window}', line=dict(color='purple')), row=1, col=1)
-
-        # Add buy/sell signals
-        buy_signals = data[data['composite_signal'] == 'BUY']
-        sell_signals = data[data['composite_signal'] == 'SELL']
-        
-        if not buy_signals.empty:
-            fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['close'],
-                                    mode='markers', name='買いシグナル',
-                                    marker=dict(symbol='triangle-up', size=10, color='green')), row=1, col=1)
-        
-        if not sell_signals.empty:
-            fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['close'],
-                                    mode='markers', name='売りシグナル',
-                                    marker=dict(symbol='triangle-down', size=10, color='red')), row=1, col=1)
-
-        # RSI
-        fig.add_trace(go.Scatter(x=data.index, y=data['rsi'], mode='lines', name='RSI'), row=2, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-
-        # Stochastic
-        fig.add_trace(go.Scatter(x=data.index, y=data['stochk'], mode='lines', name='%K'), row=3, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['stochd'], mode='lines', name='%D'), row=3, col=1)
-        fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
-        fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
-
-        # MACD
-        fig.add_trace(go.Scatter(x=data.index, y=data['macd'], mode='lines', name='MACD'), row=4, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['macds'], mode='lines', name='シグナルライン'), row=4, col=1)
-        fig.add_trace(go.Bar(x=data.index, y=data['macdh'], name='ヒストグラム'), row=4, col=1)
-
-        # Update layout
-        fig.update_layout(
-            height=800,
-            xaxis_rangeslider_visible=False,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        fig.update_yaxes(title_text="価格 (USD)", row=1, col=1)
-        fig.update_yaxes(title_text="RSI", row=2, col=1)
-        fig.update_yaxes(title_text="ストキャスティクス", row=3, col=1)
-        fig.update_yaxes(title_text="MACD", row=4, col=1)
-
+    with tab3:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+        fig.add_trace(go.Candlestick(x=data.index, open=data['open'], high=data['high'], low=data['low'], close=data['close'], name='価格'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['sma_short'], mode='lines', name=f'SMA {params["short_window"]}'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['sma_long'], mode='lines', name=f'SMA {params["long_window"]}'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data[data['composite_signal'] == 'BUY'].index, y=data[data['composite_signal'] == 'BUY']['close'], mode='markers', name='買い', marker=dict(symbol='triangle-up', size=10, color='lime')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data[data['composite_signal'] == 'SELL'].index, y=data[data['composite_signal'] == 'SELL']['close'], mode='markers', name='売り', marker=dict(symbol='triangle-down', size=10, color='red')), row=1, col=1)
+        fig.add_trace(go.Bar(x=data.index, y=data['macdh'], name='MACDヒストグラム', marker_color=np.where(data['macdh'] > 0, 'green', 'tomato')), row=2, col=1)
+        fig.update_layout(height=700, xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig, use_container_width=True)
 
-        # Historical Data Table
-        st.header("履歴データ")
-        display_data = data[['open', 'high', 'low', 'close', 'volume', 
-                           'sma_short', 'sma_long', 'rsi', 'stochk', 'macd', 'composite_signal']].tail(20)
-        display_data.columns = ['始値', '高値', '安値', '終値', '出来高', 
-                              f'SMA{short_window}', f'SMA{long_window}', 'RSI', 'Stoch%K', 'MACD', '総合シグナル']
-        st.dataframe(display_data, use_container_width=True)
-        
-    except Exception as e:
-        logger.error(f"Technical analysis error: {str(e)}")
-        st.error(f"技術分析の計算中にエラーが発生しました: {str(e)}")
-
-else:
-    st.warning("有効なティッカーと日付範囲を選択して分析を開始してください。")
-
-# Footer
 st.markdown("---")
-st.markdown("⚠️ **免責事項**: このツールは教育目的のみで提供されています。投資判断は自己責任で行ってください。")
-st.markdown("---")
-st.markdown("⚠️ **免責事項**: このツールは教育目的のみで提供されています。投資判断は自己責任で行ってください。")
+st.markdown("🏆 **完成版**: このツールは教育および情報提供目的のものです。投資判断はご自身の責任で行ってください。")

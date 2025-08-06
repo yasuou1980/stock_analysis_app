@@ -249,7 +249,9 @@ if data.empty: st.error("分析可能なデータがありません。期間や�
 
 latest = data.iloc[-1]
 if alerts := check_alerts(latest):
-    st.subheader("🚨 重要アラート"); [st.info(alert) for alert in alerts]
+    st.subheader("🚨 重要アラート")
+    for alert in alerts:
+        st.info(alert)
 
 st.header("現在の市場状況")
 cols = st.columns([1.5, 1.5, 1.5, 2])

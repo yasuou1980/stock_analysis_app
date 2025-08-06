@@ -240,7 +240,9 @@ st.title(f"プロフェッショナル株式戦略分析: {ticker}")
 raw_data = load_data(ticker, start_date, end_date)
 if raw_data is None or not validate_date_range(start_date, end_date): st.stop()
 if quality_issues := validate_data_quality(raw_data):
-    with st.expander("⚠️ データ品質の警告", expanded=True): [st.warning(issue) for issue in quality_issues]
+    with st.expander("⚠️ データ品質の警告", expanded=True): 
+        for issue in quality_issues:
+            st.warning(issue)
 
 data = calculate_indicators_and_signals(raw_data, params)
 if data.empty: st.error("分析可能なデータがありません。期間やパラメータを調整してください。"); st.stop()

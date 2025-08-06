@@ -8,3 +8,5 @@ requests>=2.31.0
 yfinance
 pandas-ta
 setuptools
+toml
+tomli-w

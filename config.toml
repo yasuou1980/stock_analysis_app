@@ -1,0 +1,5 @@
+
+# 設定ファイル
+
+[tickers]
+default_tickers = ["SOXL", "SOXS", "NVDA", "AMD", "TSM", "AAPL", "GOOGL", "MSFT"]

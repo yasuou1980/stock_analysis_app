@@ -64,17 +64,27 @@ def load_settings(filename="settings.json"):
 
 @st.cache_data
 def load_data(_ticker, start, end):
-    """Yahoo Financeから株価データを読み込む"""
+    """Yahoo Financeから株価データを読み込む（エラー修正版）"""
     try:
         data = yf.download(_ticker, start=start, end=end, auto_adjust=True, progress=False)
         if data.empty:
             st.error(f"ティッカー {_ticker} のデータが見つかりません。")
             return None
-        data.columns = [col.lower() for col in data.columns]
+
+        # --- ここからが修正部分 ---
+        # yfinanceがMultiIndexを返す場合に対応
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+        
+        # 列名を確実に文字列に変換してから小文字化
+        data.columns = [str(col).lower() for col in data.columns]
+        # --- 修正部分ここまで ---
+
         data.dropna(inplace=True)
         return data
     except Exception as e:
-        st.error(f"データの読み込みエラー: {e}")
+        st.error(f"データの読み込み中に予期せぬエラーが発生しました: {e}")
+        logger.error(f"Data loading error for ticker {_ticker}: {e}")
         return None
 
 @st.cache_data
@@ -127,7 +137,7 @@ def safe_calculate_signal_strength(row):
 def calculate_position_size(price, volatility, portfolio_value):
     """ボラティリティベースのポジションサイズを計算"""
     if volatility == 0: return 0
-    target_risk, max_position_ratio = 0.02, 0.9 # 1取引のリスク2%、最大レバレッジなし(資金の90%まで)
+    target_risk, max_position_ratio = 0.02, 0.9
     size_in_currency = (portfolio_value * target_risk) / volatility
     return min(size_in_currency / price, (portfolio_value * max_position_ratio) / price)
 
@@ -164,7 +174,8 @@ def calculate_performance_metrics(_portfolio_values, _dates):
     
     total_return = (_portfolio_values[-1] / _portfolio_values[0] - 1) * 100
     pv_arr = np.array(_portfolio_values)
-    max_dd = np.min((pv_arr - np.maximum.accumulate(pv_arr)) / np.maximum.accumulate(pv_arr)) * 100 if np.maximum.accumulate(pv_arr).any() else 0
+    running_max = np.maximum.accumulate(pv_arr)
+    max_dd = np.min((pv_arr - running_max) / running_max) * 100 if running_max.any() and (running_max > 0).any() else 0
     sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0
     volatility = returns.std() * np.sqrt(252) * 100
     var_95 = returns.quantile(0.05) * 100
@@ -187,7 +198,6 @@ def calculate_trade_metrics(trades_df):
 # --- Sidebar UI ---
 st.sidebar.title("設定")
 
-# プリセット定義とセッションステート初期化
 PRESETS = {
     "スイングトレード": {'short_window': 20, 'long_window': 50, 'rsi_period': 14, 'macd_fast': 12, 'macd_slow': 26, 'macd_signal': 9},
     "長期投資": {'short_window': 50, 'long_window': 200, 'rsi_period': 20, 'macd_fast': 20, 'macd_slow': 40, 'macd_signal': 10}
@@ -195,7 +205,6 @@ PRESETS = {
 if 'params' not in st.session_state:
     st.session_state.params = PRESETS["スイングトレード"]
 
-# UIウィジェット
 ticker = st.sidebar.selectbox("ティッカー", ("SOXL", "SOXS", "NVDA", "AMD", "TSM"), index=0)
 end_date = datetime.now().date()
 start_date = st.sidebar.date_input("開始日", end_date - timedelta(days=3*365))

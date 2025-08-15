@@ -98,8 +98,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
             st.rerun()
 
     st.sidebar.header("最適化")
-    if st.sidebar.button("最適化を実行"):
-        run_optimization(st.session_state.ticker, start_date, end_date, st.session_state.preset_choice, st.session_state.strategy_type)
+    run_optimization_clicked = st.sidebar.button("最適化を実行")
 
     st.sidebar.header("キャッシュ管理")
     if st.sidebar.button("データキャッシュをクリア"):
@@ -114,4 +113,4 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.sidebar.write(f"**現在の戦略**: `{st.session_state.strategy_type}`")
         st.sidebar.json(st.session_state.params, expanded=False)
 
-    return st.session_state.ticker, start_date, end_date, st.session_state.params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, st.session_state.strategy_type
+    return st.session_state.ticker, start_date, end_date, st.session_state.params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, st.session_state.strategy_type, run_optimization_clicked

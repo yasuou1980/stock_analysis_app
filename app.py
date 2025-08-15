@@ -49,7 +49,12 @@ def main():
         'stoch_lower': ('Stoch 下限', 10, 30, 20)
     }
 
-    ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type = setup_sidebar(TICKERS, PRESETS, params_config)
+    ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type, run_optimization_clicked = setup_sidebar(TICKERS, PRESETS, params_config)
+
+    if run_optimization_clicked:
+        from optimizer_ui import run_optimization
+        run_optimization(ticker, start_date, end_date, st.session_state.preset_choice, strategy_type)
+        st.stop()
 
     st.title(f"🏆 プロフェッショナル株式戦略分析: {ticker}")
 

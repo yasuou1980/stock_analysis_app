@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 @st.cache_data
-def calculate_indicators_and_signals(data_hash, _data, params):
+def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="トレンドフォロー"):
     """技術指標とシグナルを計算する"""
     data = _data.copy()
     try:
@@ -21,13 +21,31 @@ def calculate_indicators_and_signals(data_hash, _data, params):
             {"kind": "stoch", "k": params['stoch_k'], "d": params['stoch_d'], "col_names": ("stoch_k", "stoch_d")}
         ])
         data.ta.strategy(strategy)
+
+        # 移動平均乖離率
+        if 'sma_long' in data.columns and not data['sma_long'].isnull().all() and not (data['sma_long'] == 0).any():
+            data['deviation'] = ((data['close'] - data['sma_long']) / data['sma_long']) * 100
+        else:
+            data['deviation'] = 0
+
         data['volatility'] = data['close'].pct_change().rolling(window=30).std().bfill()
-        scores = (
-            np.where(data['sma_short'] > data['sma_long'], 2, -2) + 
-            np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) + 
-            np.where(data['macdh'] > 0, 2, -2)
-        )
-        data['composite_signal'] = np.select([scores >= 3.5, scores <= -3.5], ["BUY", "SELL"], default="HOLD")
+
+        if strategy_type == "トレンドフォロー":
+            scores = (
+                np.where(data['sma_short'] > data['sma_long'], 2, -2) + 
+                np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) + 
+                np.where(data['macdh'] > 0, 2, -2)
+            )
+            data['composite_signal'] = np.select([scores >= 3.5, scores <= -3.5], ["BUY", "SELL"], default="HOLD")
+        elif strategy_type == "逆張り":
+            counter_scores = (
+                np.select([data['deviation'] < params.get('dev_lower', -10), data['deviation'] > params.get('dev_upper', 10)], [2, -2], default=0) +
+                np.select([data['rsi'] < params.get('rsi_lower', 30), data['rsi'] > params.get('rsi_upper', 70)], [2, -2], default=0) +
+                np.select([data['close'] < data['bbl'], data['close'] > data['bbu']], [1.5, -1.5], default=0) +
+                np.select([data['stoch_k'] < params.get('stoch_lower', 20), data['stoch_k'] > params.get('stoch_upper', 80)], [1.5, -1.5], default=0)
+            )
+            data['composite_signal'] = np.select([counter_scores >= 4, counter_scores <= -4], ["BUY", "SELL"], default="HOLD")
+
         data.dropna(inplace=True)
         return data
     except Exception as e:

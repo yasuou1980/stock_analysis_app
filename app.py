@@ -21,11 +21,13 @@ def main():
     PRESETS = {
         "スイングトレード": {
             'short_window': 10, 'long_window': 40, 'rsi_period': 10, 'macd_fast': 10, 'macd_slow': 20, 'macd_signal': 7,
-            'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3
+            'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
+            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20
         },
         "長期投資": {
             'short_window': 50, 'long_window': 200, 'rsi_period': 30, 'macd_fast': 30, 'macd_slow': 60, 'macd_signal': 15,
-            'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3
+            'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
+            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20
         }
     }
     params_config = {
@@ -38,10 +40,16 @@ def main():
         'bb_length': ('BB期間', 10, 50, 20),
         'bb_std': ('BB標準偏差', 1.5, 3.0, 2.0),
         'stoch_k': ('Stoch %K', 5, 20, 14),
-        'stoch_d': ('Stoch %D', 3, 10, 3)
+        'stoch_d': ('Stoch %D', 3, 10, 3),
+        'dev_upper': ('乖離率 上限', 5, 25, 10),
+        'dev_lower': ('乖離率 下限', -25, -5, -10),
+        'rsi_upper': ('RSI 上限', 60, 80, 70),
+        'rsi_lower': ('RSI 下限', 20, 40, 30),
+        'stoch_upper': ('Stoch 上限', 70, 90, 80),
+        'stoch_lower': ('Stoch 下限', 10, 30, 20)
     }
 
-    ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params = setup_sidebar(TICKERS, PRESETS, params_config)
+    ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type = setup_sidebar(TICKERS, PRESETS, params_config)
 
     st.title(f"🏆 プロフェッショナル株式戦略分析: {ticker}")
 
@@ -60,8 +68,8 @@ def main():
                 st.warning(issue)
 
     with st.spinner('テクニカル指標を計算中...'):
-        data_hash = hash(str(raw_data.values.tobytes()) + str(params))
-        data = calculate_indicators_and_signals(data_hash, raw_data, params)
+        data_hash = hash(str(raw_data.values.tobytes()) + str(params) + strategy_type)
+        data = calculate_indicators_and_signals(data_hash, raw_data, params, strategy_type)
 
     if data.empty: 
         st.error("分析可能なデータがありません。期間やパラメータを調整してください。")
@@ -74,6 +82,13 @@ def main():
 
     if metrics:
         plot_performance(data, metrics, results, params)
+
+    if results and 'trades' in results and results['trades']:
+        import pandas as pd
+        trades_df = pd.DataFrame(results['trades'])
+        st.subheader("取引詳細分析")
+        with st.expander("取引履歴を表示"):
+            st.dataframe(trades_df)
 
     st.markdown("---")
     st.markdown("🏆 **完成版**: このツールは教育および情報提供目的のものです。投資判断はご自身の責任で行ってください。")

@@ -13,12 +13,19 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.session_state.params = PRESETS["スイングトレード"]
     if 'preset_choice' not in st.session_state:
         st.session_state.preset_choice = "スイングトレード"
+    if 'strategy_type' not in st.session_state:
+        st.session_state.strategy_type = "トレンドフォロー"
 
     # --- UI Components ---
     ticker_choice = st.sidebar.selectbox("ティッカー", TICKERS, index=TICKERS.index(st.session_state.ticker) if st.session_state.ticker in TICKERS else 0)
     if ticker_choice != st.session_state.ticker:
         st.session_state.ticker = ticker_choice
         st.cache_data.clear()
+        st.rerun()
+
+    strategy_type = st.sidebar.selectbox("戦略タイプ", ["トレンドフォロー", "逆張り"], index=["トレンドフォロー", "逆張り"].index(st.session_state.strategy_type))
+    if strategy_type != st.session_state.strategy_type:
+        st.session_state.strategy_type = strategy_type
         st.rerun()
 
     preset_choice = st.sidebar.selectbox("設定プリセット", list(PRESETS.keys()), index=list(PRESETS.keys()).index(st.session_state.preset_choice))
@@ -32,11 +39,23 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     end_date = st.sidebar.date_input("終了日", end_date)
 
     st.sidebar.header("技術分析設定")
-    params = {}
-    for key, (label, min_val, max_val, _) in params_config.items():
-        current_val = st.session_state.params.get(key, PRESETS[st.session_state.preset_choice][key])
-        new_val = st.sidebar.slider(label, min_val, max_val, current_val)
-        params[key] = new_val
+    
+    # 動的に表示するパラメータを決定
+    visible_params = list(params_config.keys())
+    if strategy_type == "トレンドフォロー":
+        visible_params = [p for p in visible_params if 'dev' not in p and 'lower' not in p and 'upper' not in p]
+    else: # 逆張り
+        visible_params = [p for p in visible_params if 'macd' not in p and 'window' not in p]
+
+    # セッションステートのパラメータを直接更新
+    for key in visible_params:
+        label, min_val, max_val, _ = params_config[key]
+        current_val = st.session_state.params.get(key, PRESETS[st.session_state.preset_choice].get(key, _))
+        
+        if isinstance(min_val, float) or isinstance(max_val, float) or isinstance(current_val, float):
+             new_val = st.sidebar.slider(label, float(min_val), float(max_val), float(current_val))
+        else:
+             new_val = st.sidebar.slider(label, int(min_val), int(max_val), int(current_val))
         st.session_state.params[key] = new_val
 
     st.sidebar.header("バックテスト設定")
@@ -56,28 +75,31 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     st.sidebar.header("設定管理")
     if st.sidebar.button("設定保存"):
         save_settings({
-            **params, 
+            **st.session_state.params,
             **ps_params,
             'position_sizing_strategy': position_sizing_strategy,
             'ticker': st.session_state.ticker, 
             'start_date': start_date, 
             'end_date': end_date,
-            'preset_choice': st.session_state.preset_choice
+            'preset_choice': st.session_state.preset_choice,
+            'strategy_type': st.session_state.strategy_type
         })
 
     if st.sidebar.button("設定読込"):
         if loaded := load_settings():
-            st.session_state.params.update({k: loaded[k] for k in params if k in loaded})
+            st.session_state.params.update({k: v for k, v in loaded.items() if k in params_config})
             if 'ticker' in loaded and loaded['ticker'] in TICKERS:
                 st.session_state.ticker = loaded['ticker']
             if 'preset_choice' in loaded and loaded['preset_choice'] in PRESETS:
                 st.session_state.preset_choice = loaded['preset_choice']
+            if 'strategy_type' in loaded:
+                st.session_state.strategy_type = loaded['strategy_type']
             st.cache_data.clear()
             st.rerun()
 
     st.sidebar.header("最適化")
     if st.sidebar.button("最適化を実行"):
-        run_optimization(st.session_state.ticker, start_date, end_date, st.session_state.preset_choice)
+        run_optimization(st.session_state.ticker, start_date, end_date, st.session_state.preset_choice, st.session_state.strategy_type)
 
     st.sidebar.header("キャッシュ管理")
     if st.sidebar.button("データキャッシュをクリア"):
@@ -89,6 +111,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.sidebar.subheader("🐞 デバッグ情報")
         st.sidebar.write(f"**選択中のティッカー**: `{st.session_state.ticker}`")
         st.sidebar.write(f"**現在のプリセット**: `{st.session_state.preset_choice}`")
+        st.sidebar.write(f"**現在の戦略**: `{st.session_state.strategy_type}`")
         st.sidebar.json(st.session_state.params, expanded=False)
 
-    return st.session_state.ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params
+    return st.session_state.ticker, start_date, end_date, st.session_state.params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, st.session_state.strategy_type

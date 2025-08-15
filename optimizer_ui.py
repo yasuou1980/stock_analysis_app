@@ -6,15 +6,15 @@ from backtester import calculate_indicators_and_signals, backtest_strategy, calc
 from datetime import datetime, timedelta
 import itertools
 
-def evaluate_performance(params, raw_data):
+def evaluate_performance(params, raw_data, strategy_type):
     initial_capital = 10000
     commission_rate = 0.001
     slippage = 0.0005
     position_sizing_strategy = "固定リスク率 (Volatility Adjusted)"
     ps_params = {'target_risk': 0.02, 'max_position_ratio': 0.9}
 
-    data_hash = hash(str(raw_data.values.tobytes()) + str(params))
-    data = calculate_indicators_and_signals(data_hash, raw_data, params)
+    data_hash = hash(str(raw_data.values.tobytes()) + str(params) + strategy_type)
+    data = calculate_indicators_and_signals(data_hash, raw_data, params, strategy_type)
     if data.empty: return None
 
     results_hash = hash(str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params))
@@ -23,47 +23,63 @@ def evaluate_performance(params, raw_data):
     
     return metrics
 
-def get_param_grid(preset_choice):
-    if preset_choice == "スイングトレード":
+def get_param_grid(preset_choice, strategy_type):
+    if strategy_type == "トレンドフォロー":
+        # (変更なし)
+        if preset_choice == "スイングトレード":
+            return {
+                'short_window': [10, 15, 20],
+                'long_window': [40, 50, 60],
+                'rsi_period': [10, 14, 18],
+                'macd_fast': [10, 12, 15],
+                'macd_slow': [20, 26, 30],
+                'macd_signal': [7, 9, 10],
+            }
+        else: # 長期投資
+            return {
+                'short_window': [40, 50, 60],
+                'long_window': [180, 200, 220],
+                'rsi_period': [20, 25, 30],
+                'macd_fast': [20, 25, 30],
+                'macd_slow': [40, 50, 60],
+                'macd_signal': [10, 15, 20],
+            }
+    else: # 逆張り (1000通り以下に調整)
         return {
-            'short_window': [10, 15, 20],
-            'long_window': [40, 50, 60],
-            'rsi_period': [10, 14, 18],
-            'macd_fast': [10, 12, 15],
-            'macd_slow': [20, 26, 30],
-            'macd_signal': [7, 9, 10],
-            'bb_length': [20],
-            'bb_std': [2.0],
-            'stoch_k': [14],
-            'stoch_d': [3]
+            'bb_length': [15, 20, 25],          # 3 options
+            'bb_std': [2.0, 2.5],               # 2 options
+            'stoch_k': [14],                    # 1 option (fixed)
+            'stoch_d': [3],                     # 1 option (fixed)
+            'dev_upper': [8, 10, 12, 15],       # 4 options
+            'dev_lower': [-15, -12, -10, -8],   # 4 options
+            'rsi_upper': [70, 75, 80],          # 3 options
+            'rsi_lower': [20, 25, 30],          # 3 options
+            'stoch_upper': [80],                # 1 option (fixed)
+            'stoch_lower': [20]                 # 1 option (fixed)
         }
-    else: # 長期投資
-        return {
-            'short_window': [40, 50, 60],
-            'long_window': [180, 200, 220],
-            'rsi_period': [20, 25, 30],
-            'macd_fast': [20, 25, 30],
-            'macd_slow': [40, 50, 60],
-            'macd_signal': [10, 15, 20],
-            'bb_length': [20],
-            'bb_std': [2.0],
-            'stoch_k': [14],
-            'stoch_d': [3]
-        }
+        # Total combinations: 3*2*1*1*4*4*3*3*1*1 = 864
 
-def run_optimization(ticker, start_date, end_date, preset_choice):
-    st.subheader("⚙️ 最適化を実行中...")
+def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type):
+    st.subheader(f"⚙️ {strategy_type}戦略の最適化を実行中...")
     
     raw_data = load_data(ticker, start_date.isoformat(), end_date.isoformat())
     if raw_data is None: 
         st.error("データが取得できませんでした。最適化を中止します。")
         return
 
-    param_grid = get_param_grid(preset_choice)
+    param_grid = get_param_grid(preset_choice, strategy_type)
     keys, values = zip(*param_grid.items())
     param_combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
-    total_combinations = len(param_combinations)
+    # 既存のパラメータを保持しつつ、最適化対象のパラメータで上書きする
+    base_params = st.session_state.get('params', {}).copy()
+    full_combinations = []
+    for p_comb in param_combinations:
+        temp_params = base_params.copy()
+        temp_params.update(p_comb)
+        full_combinations.append(temp_params)
+
+    total_combinations = len(full_combinations)
     st.write(f"{total_combinations}通りの組み合わせをテストします。")
     progress_bar = st.progress(0)
 
@@ -72,8 +88,8 @@ def run_optimization(ticker, start_date, end_date, preset_choice):
     best_return = -100
     best_params_return = None
 
-    for i, params in enumerate(param_combinations):
-        metrics = evaluate_performance(params, raw_data)
+    for i, params in enumerate(full_combinations):
+        metrics = evaluate_performance(params, raw_data, strategy_type)
         progress_bar.progress((i + 1) / total_combinations)
         if metrics:
             total_return = metrics.get('total_return', 0)

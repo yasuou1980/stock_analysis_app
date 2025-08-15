@@ -21,8 +21,7 @@ def load_config(filename="config.toml"):
 def save_settings(settings, filename="config.toml"):
     """現在の設定をTOMLファイルに保存する"""
     config = load_config(filename)
-    settings_serializable = {k: v.isoformat() if isinstance(v, datetime.date) else v for k, v in settings.items()}
-    config['user_settings'] = settings_serializable
+    config['user_settings'] = settings
     with open(filename, "wb") as f:
         tomli_w.dump(config, f)
     st.sidebar.success(f"設定を {filename} に保存しました。")
@@ -32,8 +31,11 @@ def load_settings(filename="config.toml"):
     config = load_config(filename)
     settings = config.get('user_settings', {})
     for key, value in settings.items():
-        if key in ['start_date', 'end_date'] and isinstance(value, str):
-            settings[key] = datetime.fromisoformat(value).date()
+        if key in ['start_date', 'end_date']:
+            if isinstance(value, str):
+                settings[key] = datetime.fromisoformat(value).date()
+            elif isinstance(value, datetime):
+                settings[key] = value.date()
     return settings
 
 def validate_date_range(start_date, end_date):

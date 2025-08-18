@@ -2,4 +2,4 @@
 # 設定ファイル
 
 [tickers]
-default_tickers = ["SOXL", "SOXS", "NVDA", "AMD", "TSM", "AAPL", "GOOGL", "MSFT"]
+default_tickers = ["SOXL", "SOXS", "TQQQ", "FNGG", "TSLL", "NUGT", "SOFI", "CLSK"]

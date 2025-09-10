@@ -17,7 +17,15 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
         data.ta.rsi(length=params['rsi_period'], append=True, col_names="rsi")
         data.ta.macd(fast=params['macd_fast'], slow=params['macd_slow'], signal=params['macd_signal'], append=True, col_names=("macd", "macdh", "macds"))
         data.ta.bbands(length=params['bb_length'], std=params['bb_std'], append=True, col_names=("bbl", "bbm", "bbu", "bbb", "bbp"))
-        data.ta.stoch(k=params['stoch_k'], d=params['stoch_d'], append=True, col_names=("stoch_k", "stoch_d"))
+        
+        # stochasticsを計算し、カラム名をリネームする
+        data.ta.stoch(k=params['stoch_k'], d=params['stoch_d'], append=True)
+        stoch_k_col = next((col for col in data.columns if col.startswith('STOCHk')), None)
+        stoch_d_col = next((col for col in data.columns if col.startswith('STOCHd')), None)
+        if stoch_k_col:
+            data.rename(columns={stoch_k_col: 'stoch_k'}, inplace=True)
+        if stoch_d_col:
+            data.rename(columns={stoch_d_col: 'stoch_d'}, inplace=True)
 
         # 移動平均乖離率
         if 'sma_long' in data.columns and not data['sma_long'].isnull().all() and not (data['sma_long'] == 0).any():
@@ -29,8 +37,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
 
         if strategy_type == "トレンドフォロー":
             scores = (
-                np.where(data['sma_short'] > data['sma_long'], 2, -2) +
-                np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) +
+                np.where(data['sma_short'] > data['sma_long'], 2, -2) + 
+                np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) + 
                 np.where(data['macdh'] > 0, 2, -2)
             )
             data['composite_signal'] = np.select([scores >= 3.5, scores <= -3.5], ["BUY", "SELL"], default="HOLD")

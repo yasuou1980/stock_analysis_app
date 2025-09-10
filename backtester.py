@@ -11,16 +11,13 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
     """技術指標とシグナルを計算する"""
     data = _data.copy()
     try:
-        strategy = ta.Strategy(name="Custom Strategy", ta=[
-            {"kind": "sma", "length": params['short_window'], "col_names": "sma_short"},
-            {"kind": "sma", "length": params['long_window'], "col_names": "sma_long"},
-            {"kind": "rsi", "length": params['rsi_period'], "col_names": "rsi"},
-            {"kind": "macd", "fast": params['macd_fast'], "slow": params['macd_slow'], 
-             "signal": params['macd_signal'], "col_names": ("macd", "macdh", "macds")},
-            {"kind": "bbands", "length": params['bb_length'], "std": params['bb_std'], "col_names": ("bbl", "bbm", "bbu", "bbb", "bbp")},
-            {"kind": "stoch", "k": params['stoch_k'], "d": params['stoch_d'], "col_names": ("stoch_k", "stoch_d")}
-        ])
-        data.ta.strategy(strategy)
+        # 各指標を個別に関数として呼び出す
+        data.ta.sma(length=params['short_window'], append=True, col_names="sma_short")
+        data.ta.sma(length=params['long_window'], append=True, col_names="sma_long")
+        data.ta.rsi(length=params['rsi_period'], append=True, col_names="rsi")
+        data.ta.macd(fast=params['macd_fast'], slow=params['macd_slow'], signal=params['macd_signal'], append=True, col_names=("macd", "macdh", "macds"))
+        data.ta.bbands(length=params['bb_length'], std=params['bb_std'], append=True, col_names=("bbl", "bbm", "bbu", "bbb", "bbp"))
+        data.ta.stoch(k=params['stoch_k'], d=params['stoch_d'], append=True, col_names=("stoch_k", "stoch_d"))
 
         # 移動平均乖離率
         if 'sma_long' in data.columns and not data['sma_long'].isnull().all() and not (data['sma_long'] == 0).any():
@@ -32,8 +29,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
 
         if strategy_type == "トレンドフォロー":
             scores = (
-                np.where(data['sma_short'] > data['sma_long'], 2, -2) + 
-                np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) + 
+                np.where(data['sma_short'] > data['sma_long'], 2, -2) +
+                np.select([data['rsi'] < 30, data['rsi'] > 70], [1.5, -1.5], default=0) +
                 np.where(data['macdh'] > 0, 2, -2)
             )
             data['composite_signal'] = np.select([scores >= 3.5, scores <= -3.5], ["BUY", "SELL"], default="HOLD")

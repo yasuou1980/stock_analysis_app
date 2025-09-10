@@ -55,10 +55,12 @@ def main():
 
     # --- 全ティッカーのサマリー表示機能 ---
     st.header("📈 全ティッカーの市場状況サマリー")
-    summary_data = []  # UnboundLocalErrorを防ぐためにここで初期化
+    
+    summary_data_trend = []
+    summary_data_counter = []
+    
     with st.spinner("全ティッカーの最新データを取得・分析中です..."):
         default_params = PRESETS["スイングトレード"]
-        default_strategy = "トレンドフォロー"
         
         end_date_summary = datetime.now().date()
         start_date_summary = end_date_summary - timedelta(days=365)
@@ -71,42 +73,60 @@ def main():
             raw_data = load_data(ticker_item, start_date_summary.isoformat(), end_date_summary.isoformat())
             
             if raw_data is not None and not raw_data.empty:
-                data_hash = hash(str(raw_data.values.tobytes()) + str(default_params) + default_strategy)
-                data = calculate_indicators_and_signals(data_hash, raw_data, default_params, default_strategy)
-                
-                if not data.empty:
-                    latest = data.iloc[-1]
-                    summary_data.append({
+                # トレンドフォロー戦略の計算
+                trend_hash = hash(str(raw_data.values.tobytes()) + str(default_params) + "トレンドフォロー")
+                data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), default_params, "トレンドフォロー")
+                if not data_trend.empty:
+                    latest = data_trend.iloc[-1]
+                    summary_data_trend.append({
                         'ティッカー': ticker_item,
                         '現在価格': latest['close'],
                         '総合シグナル': latest['composite_signal'],
                         'RSI': latest['rsi'],
                         'シグナル強度': int(safe_calculate_signal_strength(latest))
                     })
+
+                # 逆張り戦略の計算
+                counter_hash = hash(str(raw_data.values.tobytes()) + str(default_params) + "逆張り")
+                data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), default_params, "逆張り")
+                if not data_counter.empty:
+                    latest = data_counter.iloc[-1]
+                    summary_data_counter.append({
+                        'ティッカー': ticker_item,
+                        '現在価格': latest['close'],
+                        '総合シグナル': latest['composite_signal'],
+                        'RSI': latest['rsi'],
+                        '乖離率(%)': latest.get('deviation', 0)
+                    })
             progress_bar.progress((i + 1) / len(TICKERS))
 
         status_text.text(f"全{len(TICKERS)}ティッカーの分析が完了しました。")
 
-    if summary_data:
-        summary_df = pd.DataFrame(summary_data)
+    st.subheader("トレンドフォロー戦略")
+    if summary_data_trend:
         st.dataframe(
-            summary_df,
+            pd.DataFrame(summary_data_trend),
             column_config={
-                "現在価格": st.column_config.NumberColumn("現在価格", format="$%.2f"),
-                "RSI": st.column_config.NumberColumn("RSI", format="%.1f"),
-                "シグナル強度": st.column_config.ProgressColumn(
-                    "シグナル強度",
-                    help="シグナルの強さを0-100で表示します。",
-                    format="%d",
-                    min_value=0,
-                    max_value=100
-                )
-            },
-            hide_index=True,
-            use_container_width=True
+                "現在価格": st.column_config.NumberColumn(format="$%.2f"),
+                "RSI": st.column_config.NumberColumn(format="%.1f"),
+                "シグナル強度": st.column_config.ProgressColumn(help="シグナルの強さを0-100で表示します。",format="%d",min_value=0,max_value=100)
+            }, hide_index=True, use_container_width=True
         )
     else:
-        st.warning("サマリーデータを取得できませんでした。ティッカーリストが空か、データソースに問題がある可能性があります。")
+        st.warning("トレンドフォロー戦略のサマリーデータを取得できませんでした。")
+
+    st.subheader("逆張り戦略")
+    if summary_data_counter:
+        st.dataframe(
+            pd.DataFrame(summary_data_counter),
+            column_config={
+                "現在価格": st.column_config.NumberColumn(format="$%.2f"),
+                "RSI": st.column_config.NumberColumn(format="%.1f"),
+                "乖離率(%)": st.column_config.NumberColumn(format="%.2f%%")
+            }, hide_index=True, use_container_width=True
+        )
+    else:
+        st.warning("逆張り戦略のサマリーデータを取得できませんでした。")
 
     st.markdown("---")
     

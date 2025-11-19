@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from data_loader import load_data
@@ -25,7 +24,6 @@ def evaluate_performance(params, raw_data, strategy_type):
 
 def get_param_grid(preset_choice, strategy_type):
     if strategy_type == "トレンドフォロー":
-        # (変更なし)
         if preset_choice == "スイングトレード":
             return {
                 'short_window': [10, 15, 20],
@@ -44,20 +42,20 @@ def get_param_grid(preset_choice, strategy_type):
                 'macd_slow': [40, 50, 60],
                 'macd_signal': [10, 15, 20],
             }
-    else: # 逆張り (1000通り以下に調整)
+    else: # 逆張り (範囲を拡大・調整)
         return {
-            'bb_length': [15, 20, 25],          # 3 options
-            'bb_std': [2.0, 2.5],               # 2 options
+            'bb_length': [20, 25],              # 2 options
+            'bb_std': [2.0, 2.5, 3.0],          # 3 options (3.0を追加: 極端な乖離のみ狙う)
             'stoch_k': [14],                    # 1 option (fixed)
             'stoch_d': [3],                     # 1 option (fixed)
-            'dev_upper': [8, 10, 12, 15],       # 4 options
-            'dev_lower': [-15, -12, -10, -8],   # 4 options
-            'rsi_upper': [70, 75, 80],          # 3 options
-            'rsi_lower': [20, 25, 30],          # 3 options
+            'dev_upper': [10, 15, 20],          # 3 options
+            'dev_lower': [-20, -15, -10],       # 3 options
+            'rsi_upper': [70, 75, 80, 85],      # 4 options (より広い範囲を探索)
+            'rsi_lower': [15, 20, 25, 30],      # 4 options (より広い範囲を探索)
             'stoch_upper': [80],                # 1 option (fixed)
             'stoch_lower': [20]                 # 1 option (fixed)
         }
-        # Total combinations: 3*2*1*1*4*4*3*3*1*1 = 864
+        # Total combinations approx: 2*3*1*1*3*3*4*4*1*1 = 864 patterns
 
 def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type):
     st.subheader(f"⚙️ {strategy_type}戦略の最適化を実行中...")

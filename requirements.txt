@@ -1,16 +1,16 @@
 streamlit>=1.28.0
-# Pandas 3.x を避け、安定した 2.2 系を使用
+# Pandas 2.x 系の安定版を使用
 pandas>=2.0.0,<3.0.0
-# Numpy 2.x は pandas-ta と互換性がないため、1.x 最終版に固定
+# Numpy 2.x との衝突を避けるため 1.x 系に固定
 numpy>=1.26.4,<2.0.0
 plotly>=5.15.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 requests>=2.31.0
-# yfinance は最新の 1.2.0 でも 3.10 なら問題なく動作します
-yfinance>=1.2.0
-# pandas-ta は 3.10 なら PyPI から正常に取得できます
-pandas-ta
+# 正しい現行バージョン（0.2.x系）を指定
+yfinance>=0.2.50
+# PyPI版ではなく、Pandas 2.x 対応の GitHub 開発版を直接指定
+pandas-ta @ git+https://github.com/twopirllc/pandas-ta.git@development
 setuptools
 toml
 tomli-w

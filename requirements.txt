@@ -7,10 +7,10 @@ plotly>=5.15.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 requests>=2.31.0
-# yfinance は現行の 0.2.x 系を明示
+# yfinance は現行の 0.2.x 系を使用
 yfinance>=0.2.50
-# Git クローンエラーを避けるため、ZIP アーカイブから直接インストール
-pandas-ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
+# master ブランチの ZIP からインストール
+pandas-ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/master.zip
 setuptools
 toml
 tomli-w

@@ -1,16 +1,15 @@
 streamlit>=1.28.0
-# Pandas 2.0 以上の互換性問題を避けるため 1.5 系に固定
-pandas>=1.5.0,<2.0.0
-# Numpy 2.0 との衝突を避けるため 1.x 系の最終版を指定
-numpy>=1.24.0,<2.0.0
+# Python 3.10/3.11で最も安定する組み合わせを指定
+pandas>=2.0.0,<2.2.0
+numpy>=1.26.4,<2.0.0
 plotly>=5.15.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 requests>=2.31.0
-# yfinance は 0.2.x 系の安定版を指定
-yfinance>=0.2.50
-# 標準の PyPI 版を使用（Pandas 1.5 なら正常に動作します）
-pandas-ta==0.3.14b0
+# バージョンを固定せず、Pipに最新の安定版を選ばせる
+yfinance
+# バージョン固定を外し、環境に合うものを自動選択させる
+pandas-ta
 setuptools
 toml
 tomli-w

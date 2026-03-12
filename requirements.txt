@@ -7,10 +7,10 @@ plotly>=5.15.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 requests>=2.31.0
-# 正しい現行バージョン（0.2.x系）を指定
+# yfinance は現行の 0.2.x 系を明示
 yfinance>=0.2.50
-# PyPI版ではなく、Pandas 2.x 対応の GitHub 開発版を直接指定
-pandas-ta @ git+https://github.com/twopirllc/pandas-ta.git@development
+# Git クローンエラーを避けるため、ZIP アーカイブから直接インストール
+pandas-ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
 setuptools
 toml
 tomli-w

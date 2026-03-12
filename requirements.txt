@@ -1,16 +1,16 @@
 streamlit>=1.28.0
-# Pandas 2.x 系の安定版を使用
-pandas>=2.0.0,<3.0.0
-# Numpy 2.x との衝突を避けるため 1.x 系に固定
+# Pandas 2.2系を使用（3.0は避ける）
+pandas>=2.2.0,<3.0.0
+# Numpy 1.x系の最終安定版を指定
 numpy>=1.26.4,<2.0.0
 plotly>=5.15.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 requests>=2.31.0
 # yfinance は現行の 0.2.x 系を使用
-yfinance>=0.2.50
-# master ブランチの ZIP からインストール
-pandas-ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/master.zip
+yfinance>=0.2.54
+# ブランチ名を master から main に修正
+pandas-ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/main.zip
 setuptools
 toml
 tomli-w

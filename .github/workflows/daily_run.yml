@@ -1,0 +1,29 @@
+name: Daily Stock Analysis Access
+
+on:
+  schedule:
+    # 毎日 日本時間 8:00 (UTC 23:00) に実行
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 手動実行も可能にする
+
+jobs:
+  access_process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 案A: 公開中のURLにアクセスしてスリープを防ぐ場合
+      - name: Ping Streamlit App URL
+        run: |
+          curl -I https://stockanalysisapp-uevbsu2jua8hhsgevjgspe.streamlit.app/ # ここに実際のURLを入力してください

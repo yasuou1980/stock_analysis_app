@@ -2,4 +2,28 @@
 # 設定ファイル
 
 [tickers]
+# Streamlit アプリのサイドバーに表示する銘柄
 default_tickers = ["SOXL", "SOXS", "TQQQ", "FNGG", "TSLL", "NUGT", "SOFI", "CLSK"]
+
+[batch]
+# バッチ実行で分析する銘柄リスト (Streamlit アプリとは独立して管理)
+tickers = [
+  # --- 半導体・ハイテク ---
+  "NVDA", "AMD", "TSM", "INTC", "AVGO", "QCOM", "MU", "AMAT",
+  # --- 主要テック ---
+  "AAPL", "MSFT", "GOOGL", "META", "AMZN",
+  # --- レバレッジ ETF (半導体) ---
+  "SOXL", "SOXS",
+  # --- レバレッジ ETF (ナスダック・S&P) ---
+  "TQQQ", "SQQQ", "UPRO", "SPXS",
+  # --- テーマ型 ETF ---
+  "FNGG", "TECL", "TSLL", "NUGT",
+  # --- 個別グロース ---
+  "SOFI", "CLSK", "MSTR", "COIN",
+  # --- 主要インデックス ETF ---
+  "SPY", "QQQ", "IWM",
+]
+# 分析に使う過去データの日数
+lookback_days = 365
+# 結果を保存するディレクトリ (batch_runner.py からの相対パス)
+results_dir = "results"

@@ -1,16 +1,38 @@
-name: Daily Stock Analysis Access
+name: Daily Stock Analysis
 
 on:
   schedule:
-    # 毎日 日本時間 8:00 (UTC 23:00) に実行
+    # 毎日 UTC 23:00 = JST 翌 8:00
     - cron: '0 23 * * *'
-  workflow_dispatch: # 手動実行も可能にする
+  workflow_dispatch: # 手動実行も可
 
 jobs:
-  access_process:
+  analyze:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # git commit/push に必要
+
     steps:
-      - name: Ping Streamlit App URL
-        # URLはご自身のアプリのURLに合わせて変更してください
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run batch analysis
+        run: python batch_runner.py --no-db
+
+      - name: Commit results
         run: |
-          curl -I https://stockanalysisapp-uevbsu2jua8hhsgevjgspe.streamlit.app/
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add results/signals_*.txt
+          # 差分がある場合のみ commit（重複実行を防ぐ）
+          git diff --staged --quiet || git commit -m "chore: daily signals $(date -u +%Y-%m-%d)"
+          git push

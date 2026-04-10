@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import logging
+import hashlib
 from datetime import datetime, timedelta
 from utils import load_config, validate_date_range, validate_data_quality, safe_calculate_signal_strength
 from data_loader import load_data
 from ui_components import setup_sidebar
-from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics
+from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics, calculate_trade_metrics
 from plotting import plot_performance
 
 # --- Page and Logging Configuration ---
@@ -74,7 +75,7 @@ def main():
             
             if raw_data is not None and not raw_data.empty:
                 # トレンドフォロー戦略の計算
-                trend_hash = hash(str(raw_data.values.tobytes()) + str(default_params) + "トレンドフォロー")
+                trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(default_params) + "トレンドフォロー").encode()).hexdigest()
                 data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), default_params, "トレンドフォロー")
                 if not data_trend.empty:
                     latest = data_trend.iloc[-1]
@@ -87,7 +88,7 @@ def main():
                     })
 
                 # 逆張り戦略の計算
-                counter_hash = hash(str(raw_data.values.tobytes()) + str(default_params) + "逆張り")
+                counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(default_params) + "逆張り").encode()).hexdigest()
                 data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), default_params, "逆張り")
                 if not data_counter.empty:
                     latest = data_counter.iloc[-1]
@@ -153,7 +154,7 @@ def main():
                 st.warning(issue)
 
     with st.spinner('テクニカル指標を計算中...'):
-        data_hash = hash(str(raw_data.values.tobytes()) + str(params) + strategy_type)
+        data_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(params) + strategy_type).encode()).hexdigest()
         data = calculate_indicators_and_signals(data_hash, raw_data, params, strategy_type)
 
     if data.empty: 
@@ -161,7 +162,7 @@ def main():
         st.stop()
 
     with st.spinner('バックテストを実行中...'):
-        results_hash = hash(str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params))
+        results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params)).encode()).hexdigest()
         results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params)
         metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
 
@@ -171,6 +172,12 @@ def main():
     if results and 'trades' in results and results['trades']:
         trades_df = pd.DataFrame(results['trades'])
         st.subheader("取引詳細分析")
+        trade_metrics = calculate_trade_metrics(trades_df)
+        if trade_metrics:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("平均保有日数", f"{trade_metrics['avg_hold_days']:.1f}日")
+            col2.metric("最長保有日数", f"{trade_metrics['max_hold_days']}日")
+            col3.metric("最短保有日数", f"{trade_metrics['min_hold_days']}日")
         with st.expander("取引履歴を表示"):
             st.dataframe(trades_df)
 

@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import hashlib
 from data_loader import load_data
 from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics
 from datetime import datetime, timedelta
@@ -12,11 +13,11 @@ def evaluate_performance(params, raw_data, strategy_type):
     position_sizing_strategy = "固定リスク率 (Volatility Adjusted)"
     ps_params = {'target_risk': 0.02, 'max_position_ratio': 0.9}
 
-    data_hash = hash(str(raw_data.values.tobytes()) + str(params) + strategy_type)
+    data_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(params) + strategy_type).encode()).hexdigest()
     data = calculate_indicators_and_signals(data_hash, raw_data, params, strategy_type)
     if data.empty: return None
 
-    results_hash = hash(str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params))
+    results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params)).encode()).hexdigest()
     results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params)
     metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
     

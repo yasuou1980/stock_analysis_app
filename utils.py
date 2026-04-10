@@ -40,8 +40,15 @@ def load_settings(filename="config.toml"):
 
 def validate_date_range(start_date, end_date):
     """日付範囲の入力を検証する"""
+    today = datetime.now().date()
     if start_date >= end_date:
         st.error("開始日は終了日より前の日付を選択してください。")
+        return False
+    if end_date > today:
+        st.error(f"終了日は本日({today})以前の日付を選択してください。")
+        return False
+    if (end_date - start_date).days < 30:
+        st.error("分析には少なくとも30日間のデータが必要です。期間を広げてください。")
         return False
     return True
 

@@ -1,54 +1,118 @@
 # 🏆 プロフェッショナル株式戦略分析アプリケーション
 
-このアプリケーションは、Streamlit を使用して構築されたインタラクティブな株価分析ツールです。テクニカル指標のバックテストと最適化を通じて、投資戦略の評価と改善をサポートします。
+Streamlit で構築したインタラクティブな株価分析ツールです。テクニカル指標の計算・バックテスト・パラメータ最適化に加え、毎日自動でシグナルを生成・蓄積するバッチ実行基盤を備えています。
 
 ## ✨ 主な機能
 
--   **株価データ取得**: `yfinance` を利用して、指定したティッカー（銘柄）の株価データを取得します。
--   **多彩な戦略選択**: UIから「トレンドフォロー戦略」と「逆張り戦略」を簡単に切り替えられます。
-    -   **トレンドフォロー戦略**: 移動平均線 (SMA) と MACD を中心とした順張り戦略。
-    -   **逆張り戦略**: 移動平均乖離率、RSI、ボリンジャーバンド、ストキャスティクスを組み合わせた、相場の反転を狙う戦略。
--   **テクニカル分析**: `pandas_ta` を用いて、戦略に必要なテクニカル指標を計算・表示します。
--   **バックテスト**: 定義された戦略に基づき、過去のデータでパフォーマンスを検証します。
--   **ポジションサイジング**: 固定リスク率（ボラティリティ調整）と固定ポートフォリオ比率の2種類のポジションサイジング戦略を選択できます。
--   **インタラクティブなUI**: Streamlit のサイドバーから、ティッカー選択、分析期間、テクニカル指標のパラメータ、バックテスト設定などを柔軟に調整できます。
--   **設定管理**: 現在の戦略やパラメータ設定を `config.toml` ファイルに保存・読み込みできます。
--   **戦略別パラメータ最適化**: UIから直接、選択中の戦略（トレンドフォロー/逆張り）に応じて、指定したパラメータ範囲で総当たり（グリッドサーチ）による最適化を実行し、最もパフォーマンスの高い設定値を見つけることができます。
--   **詳細チャート**: `plotly` を使用し、ローソク足チャート、テクニカル指標、売買シグナル、ポートフォリオの資産推移などをインタラクティブに可視化します。
+### Streamlit アプリ
+- **株価データ取得**: `yfinance` で任意の銘柄・期間のデータを取得
+- **2種類の売買戦略**
+  - **トレンドフォロー**: EMA クロス・MACD・ADX・RSI・ブレイクアウトを複合スコアリング
+  - **逆張り**: ストキャスティクス反転・RSI・ボリンジャーバンド・乖離率を複合スコアリング
+- **バックテスト**: ポジションサイジング（ボラティリティ調整 / 固定比率）・手数料・スリッページを考慮
+- **パラメータ最適化**: グリッドサーチで最高シャープレシオ・最高リターンの設定値を探索
+- **インタラクティブチャート**: ローソク足・指標・シグナル・資産推移を Plotly で可視化
+- **設定の永続化**: `config.toml` へのパラメータ保存・読み込み
 
-## 🚀 使い方
+### 自動バッチ実行（毎日）
+- **GitHub Actions** により毎日 JST 8:00 に自動実行
+- 30 銘柄 × 2 戦略のシグナルを計算し `results/signals_YYYY-MM-DD.txt` として自動 commit
+- **ローカル Mac** でも `launchd` による定時実行に対応（`setup_schedule.sh`）
+- SQLite（`results/signals.db`）への蓄積もサポート
 
-1.  **リポジトリのクローン**:
-    ```bash
-    git clone https://github.com/your-username/stock_analysis_app.git
-    cd stock_analysis_app
-    ```
+## 📊 監視銘柄（バッチ対象）
 
-2.  **Python環境のセットアップ**:
-    Python 3.9以上が推奨されます。仮想環境の利用をお勧めします。
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # Windows の場合: `venv\Scripts\activate`
-    ```
+| カテゴリ | 銘柄 |
+|----------|------|
+| 半導体・ハイテク | NVDA, AMD, TSM, INTC, AVGO, QCOM, MU, AMAT |
+| 主要テック | AAPL, MSFT, GOOGL, META, AMZN |
+| レバレッジ ETF（半導体） | SOXL, SOXS |
+| レバレッジ ETF（ナスダック・S&P） | TQQQ, SQQQ, UPRO, SPXS |
+| テーマ型 ETF | FNGG, TECL, TSLL, NUGT |
+| 個別グロース | SOFI, CLSK, MSTR, COIN |
+| 主要インデックス ETF | SPY, QQQ, IWM |
 
-3.  **必要なライブラリのインストール**:
-    ```bash
-    pip install -r requirements.txt
-    ```
+## 🚀 セットアップ
 
-4.  **アプリケーションの実行**:
-    ```bash
-    streamlit run app.py
-    ```
-    コマンド実行後、ブラウザでアプリケーションが開きます（通常 `http://localhost:8501`）。
+**Python 3.13 以上が必要です**（`pandas-ta` の要件）
 
-## ⚙️ 設定ファイル (`config.toml`)
+```bash
+git clone https://github.com/yasuou1980/stock_analysis_app.git
+cd stock_analysis_app
 
-`config.toml` ファイルには、アプリケーションのデフォルト設定やユーザー設定が保存されます。
+python3.13 -m venv venv
+source venv/bin/activate
 
--   `[tickers]` セクション: アプリケーションで利用可能なティッカーリストを定義します。
--   `[user_settings]` セクション: UIから保存したユーザー固有のパラメータ設定が保存されます。
+pip install -r requirements.txt
+```
+
+### Streamlit アプリを起動
+
+```bash
+streamlit run app.py
+```
+
+ブラウザで `http://localhost:8501` が開きます。
+
+### バッチ実行
+
+```bash
+# 動作確認（DB・ファイル保存なし）
+python batch_runner.py --dry-run
+
+# 本番実行（SQLite + テキスト保存）
+python batch_runner.py
+
+# テキストのみ保存（DB なし・CI 環境向け）
+python batch_runner.py --no-db
+```
+
+### macOS でのローカル定時実行
+
+```bash
+# 毎日 9:00 に自動実行するよう launchd に登録
+bash setup_schedule.sh
+
+# 登録解除
+bash setup_schedule.sh --uninstall
+```
+
+## ⚙️ 設定ファイル（`config.toml`）
+
+```toml
+[tickers]
+# Streamlit アプリのサイドバーに表示する銘柄
+default_tickers = [...]
+
+[batch]
+# バッチ実行で分析する銘柄リスト
+tickers = [...]
+# 分析に使う過去データの日数
+lookback_days = 365
+```
+
+## 📁 ファイル構成
+
+```
+stock_analysis_app/
+├── app.py                  # Streamlit アプリ エントリポイント
+├── backtester.py           # テクニカル指標計算・バックテスト・パフォーマンス計算
+├── batch_runner.py         # Streamlit 非依存のバッチ実行スクリプト
+├── data_loader.py          # yfinance データ取得
+├── optimizer_ui.py         # パラメータ最適化 UI
+├── plotting.py             # Plotly チャート描画
+├── ui_components.py        # サイドバー UI コンポーネント
+├── utils.py                # バリデーション・設定管理ユーティリティ
+├── config.toml             # アプリ・バッチ設定
+├── setup_schedule.sh       # macOS launchd 登録スクリプト
+├── requirements.txt        # 依存パッケージ
+├── results/
+│   ├── signals_YYYY-MM-DD.txt  # 日次シグナルレポート（git 管理）
+│   └── signals.db              # SQLite 蓄積データ（ローカルのみ）
+└── .github/workflows/
+    └── daily_run.yml       # GitHub Actions 定時実行ワークフロー
+```
 
 ## ⚠️ 免責事項
 
-このツールは教育および情報提供のみを目的としています。提供される情報や分析結果は、投資助言を構成するものではありません。実際の投資判断は、ご自身の責任と判断において行ってください。
+このツールは教育および情報提供のみを目的としています。提供される情報や分析結果は投資助言を構成するものではありません。実際の投資判断はご自身の責任と判断において行ってください。

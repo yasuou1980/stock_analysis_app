@@ -25,12 +25,14 @@ def main():
         "スイングトレード": {
             'short_window': 10, 'long_window': 40, 'rsi_period': 10, 'macd_fast': 10, 'macd_slow': 20, 'macd_signal': 7,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
-            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20
+            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
+            'adx_threshold': 20
         },
         "長期投資": {
             'short_window': 50, 'long_window': 200, 'rsi_period': 30, 'macd_fast': 30, 'macd_slow': 60, 'macd_signal': 15,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
-            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20
+            'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
+            'adx_threshold': 25
         }
     }
     params_config = {
@@ -44,6 +46,7 @@ def main():
         'bb_std': ('BB標準偏差', 1.5, 3.0, 2.0),
         'stoch_k': ('Stoch %K', 5, 20, 14),
         'stoch_d': ('Stoch %D', 3, 10, 3),
+        'adx_threshold': ('ADX閾値', 15, 35, 20),
         'dev_upper': ('乖離率 上限', 5, 25, 10),
         'dev_lower': ('乖離率 下限', -25, -5, -10),
         'rsi_upper': ('RSI 上限', 60, 80, 70),

@@ -33,6 +33,7 @@ def get_param_grid(preset_choice, strategy_type):
                 'macd_fast': [10, 12, 15],
                 'macd_slow': [20, 26, 30],
                 'macd_signal': [7, 9, 10],
+                'adx_threshold': [15, 20, 25],
             }
         else: # 長期投資
             return {
@@ -42,6 +43,7 @@ def get_param_grid(preset_choice, strategy_type):
                 'macd_fast': [20, 25, 30],
                 'macd_slow': [40, 50, 60],
                 'macd_signal': [10, 15, 20],
+                'adx_threshold': [20, 25, 30],
             }
     else: # 逆張り (範囲を拡大・調整)
         return {

@@ -1,10 +1,101 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# --- Pure pandas/numpy technical indicator implementations ---
+# Replaces pandas-ta to avoid numba dependency (incompatible with Python 3.14)
+
+def _ema(series, length):
+    """Exponential Moving Average"""
+    return series.ewm(span=length, adjust=False).mean()
+
+
+def _rsi(series, length=14):
+    """Relative Strength Index"""
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _macd(series, fast=12, slow=26, signal=9):
+    """MACD (Moving Average Convergence Divergence)
+    Returns DataFrame with columns: macd, macdh (histogram), macds (signal)
+    """
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return pd.DataFrame({'macd': macd_line, 'macdh': histogram, 'macds': signal_line}, index=series.index)
+
+
+def _bbands(series, length=20, std=2.0):
+    """Bollinger Bands
+    Returns DataFrame with columns: bbl, bbm, bbu, bbb (bandwidth), bbp (percent)
+    """
+    bbm = series.rolling(window=length).mean()
+    bb_std = series.rolling(window=length).std()
+    bbu = bbm + std * bb_std
+    bbl = bbm - std * bb_std
+    bbb = (bbu - bbl) / bbm  # bandwidth
+    bbp = (series - bbl) / (bbu - bbl)  # percent b
+    return pd.DataFrame({'bbl': bbl, 'bbm': bbm, 'bbu': bbu, 'bbb': bbb, 'bbp': bbp}, index=series.index)
+
+
+def _adx(df, length=14):
+    """Average Directional Index with +DI / -DI
+    Appends ADX_{length}, DMP_{length}, DMN_{length} columns to df.
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    plus_dm = np.where((high - prev_high) > (prev_low - low), np.maximum(high - prev_high, 0), 0.0)
+    minus_dm = np.where((prev_low - low) > (high - prev_high), np.maximum(prev_low - low, 0), 0.0)
+
+    plus_dm = pd.Series(plus_dm, index=df.index)
+    minus_dm = pd.Series(minus_dm, index=df.index)
+
+    atr = true_range.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean() / atr)
+    minus_di = 100 * (minus_dm.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean() / atr)
+
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di) * 100
+    adx = dx.ewm(alpha=1.0 / length, min_periods=length, adjust=False).mean()
+
+    df[f'ADX_{length}'] = adx
+    df[f'DMP_{length}'] = plus_di
+    df[f'DMN_{length}'] = minus_di
+
+
+def _stoch(df, k=14, d=3):
+    """Stochastic Oscillator
+    Appends stoch_k, stoch_d columns to df.
+    """
+    lowest_low = df['low'].rolling(window=k).min()
+    highest_high = df['high'].rolling(window=k).max()
+    stoch_k = 100 * (df['close'] - lowest_low) / (highest_high - lowest_low)
+    stoch_d = stoch_k.rolling(window=d).mean()
+    df['stoch_k'] = stoch_k
+    df['stoch_d'] = stoch_d
+
 
 @st.cache_data
 def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="トレンドフォロー"):
@@ -12,30 +103,28 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
     data = _data.copy()
     try:
         # EMA（指数平滑移動平均）
-        data['sma_short'] = ta.ema(data['close'], length=params['short_window'])
-        data['sma_long']  = ta.ema(data['close'], length=params['long_window'])
-        
+        data['sma_short'] = _ema(data['close'], length=params['short_window'])
+        data['sma_long']  = _ema(data['close'], length=params['long_window'])
+
         # RSI
-        data['rsi'] = ta.rsi(data['close'], length=params['rsi_period'])
-        
+        data['rsi'] = _rsi(data['close'], length=params['rsi_period'])
+
         # MACD
-        macd_df = ta.macd(data['close'], fast=params['macd_fast'], slow=params['macd_slow'], signal=params['macd_signal'])
-        if macd_df is not None and not macd_df.empty:
-            data['macd']  = macd_df.iloc[:, 0]
-            data['macdh'] = macd_df.iloc[:, 1]
-            data['macds'] = macd_df.iloc[:, 2]
-            
+        macd_df = _macd(data['close'], fast=params['macd_fast'], slow=params['macd_slow'], signal=params['macd_signal'])
+        data['macd']  = macd_df['macd']
+        data['macdh'] = macd_df['macdh']
+        data['macds'] = macd_df['macds']
+
         # ボリンジャーバンド
-        bb_df = ta.bbands(data['close'], length=params['bb_length'], std=params['bb_std'])
-        if bb_df is not None and not bb_df.empty:
-            data['bbl'] = bb_df.iloc[:, 0]
-            data['bbm'] = bb_df.iloc[:, 1]
-            data['bbu'] = bb_df.iloc[:, 2]
-            data['bbb'] = bb_df.iloc[:, 3]
-            data['bbp'] = bb_df.iloc[:, 4]
-        
+        bb_df = _bbands(data['close'], length=params['bb_length'], std=params['bb_std'])
+        data['bbl'] = bb_df['bbl']
+        data['bbm'] = bb_df['bbm']
+        data['bbu'] = bb_df['bbu']
+        data['bbb'] = bb_df['bbb']
+        data['bbp'] = bb_df['bbp']
+
         # ADX (トレンド強度)
-        data.ta.adx(length=14, append=True)
+        _adx(data, length=14)
         adx_col = next((col for col in data.columns if col.startswith('ADX')), None)
 
         # 出来高の移動平均 (20日)
@@ -45,13 +134,7 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             data['vol_sma'] = 0
 
         # ストキャスティクス
-        data.ta.stoch(k=params['stoch_k'], d=params['stoch_d'], append=True)
-        stoch_k_col = next((col for col in data.columns if col.startswith('STOCHk')), None)
-        stoch_d_col = next((col for col in data.columns if col.startswith('STOCHd')), None)
-        if stoch_k_col:
-            data.rename(columns={stoch_k_col: 'stoch_k'}, inplace=True)
-        if stoch_d_col:
-            data.rename(columns={stoch_d_col: 'stoch_d'}, inplace=True)
+        _stoch(data, k=params['stoch_k'], d=params['stoch_d'])
 
         # 移動平均乖離率
         if 'sma_long' in data.columns and not data['sma_long'].isnull().all() and not (data['sma_long'] == 0).any():

@@ -45,7 +45,8 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     if strategy_type == "トレンドフォロー":
         visible_params = [p for p in visible_params if 'dev' not in p and 'lower' not in p and 'upper' not in p]
     else: # 逆張り
-        visible_params = [p for p in visible_params if 'macd' not in p and 'window' not in p and p != 'adx_threshold']
+        visible_params = [p for p in visible_params if 'macd' not in p and 'window' not in p and p != 'adx_threshold'
+                          and p != 'score_smooth_period' and p != 'ema_slope_period']
 
     # セッションステートのパラメータを直接更新
     for key in visible_params:

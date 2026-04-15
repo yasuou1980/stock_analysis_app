@@ -186,6 +186,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
         "dev_upper": 10, "dev_lower": -10,
         "rsi_upper": 70, "rsi_lower": 30,
         "stoch_upper": 80, "stoch_lower": 20,
+        "score_smooth_period": 3, "ema_slope_period": 5,
     }
     strategies = ["トレンドフォロー", "逆張り"]
 

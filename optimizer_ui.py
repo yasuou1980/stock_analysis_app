@@ -34,6 +34,8 @@ def get_param_grid(preset_choice, strategy_type):
                 'macd_slow': [20, 26, 30],
                 'macd_signal': [7, 9, 10],
                 'adx_threshold': [15, 20, 25],
+                'score_smooth_period': [2, 3, 5],
+                'ema_slope_period': [3, 5, 8],
             }
         else: # 長期投資
             return {
@@ -44,6 +46,8 @@ def get_param_grid(preset_choice, strategy_type):
                 'macd_slow': [40, 50, 60],
                 'macd_signal': [10, 15, 20],
                 'adx_threshold': [20, 25, 30],
+                'score_smooth_period': [3, 5, 7],
+                'ema_slope_period': [5, 8, 13],
             }
     else: # 逆張り (範囲を拡大・調整)
         return {

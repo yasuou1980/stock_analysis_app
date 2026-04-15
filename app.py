@@ -26,13 +26,13 @@ def main():
             'short_window': 10, 'long_window': 40, 'rsi_period': 10, 'macd_fast': 10, 'macd_slow': 20, 'macd_signal': 7,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
             'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
-            'adx_threshold': 20
+            'adx_threshold': 20, 'score_smooth_period': 3, 'ema_slope_period': 5
         },
         "長期投資": {
             'short_window': 50, 'long_window': 200, 'rsi_period': 30, 'macd_fast': 30, 'macd_slow': 60, 'macd_signal': 15,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
             'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
-            'adx_threshold': 25
+            'adx_threshold': 25, 'score_smooth_period': 5, 'ema_slope_period': 8
         }
     }
     params_config = {
@@ -47,6 +47,8 @@ def main():
         'stoch_k': ('Stoch %K', 5, 20, 14),
         'stoch_d': ('Stoch %D', 3, 10, 3),
         'adx_threshold': ('ADX閾値', 15, 35, 20),
+        'score_smooth_period': ('スコア平滑化期間', 2, 7, 3),
+        'ema_slope_period': ('EMAスロープ期間', 3, 13, 5),
         'dev_upper': ('乖離率 上限', 5, 25, 10),
         'dev_lower': ('乖離率 下限', -25, -5, -10),
         'rsi_upper': ('RSI 上限', 60, 80, 70),
@@ -177,10 +179,40 @@ def main():
         st.subheader("取引詳細分析")
         trade_metrics = calculate_trade_metrics(trades_df)
         if trade_metrics:
+            st.markdown("##### 保有期間")
             col1, col2, col3 = st.columns(3)
             col1.metric("平均保有日数", f"{trade_metrics['avg_hold_days']:.1f}日")
             col2.metric("最長保有日数", f"{trade_metrics['max_hold_days']}日")
             col3.metric("最短保有日数", f"{trade_metrics['min_hold_days']}日")
+
+            if 'total_trades' in trade_metrics:
+                st.markdown("##### 勝敗統計")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("総取引数", f"{trade_metrics['total_trades']}")
+                col2.metric("勝率", f"{trade_metrics['win_rate']:.1f}%")
+                col3.metric("プロフィットファクター", f"{trade_metrics['profit_factor']:.2f}")
+                pf = trade_metrics['profit_factor']
+                if pf >= 2.0:
+                    col4.success("優秀")
+                elif pf >= 1.5:
+                    col4.info("良好")
+                elif pf >= 1.0:
+                    col4.warning("改善余地あり")
+                else:
+                    col4.error("損失超過")
+
+                st.markdown("##### 損益詳細")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("平均利益", f"{trade_metrics['avg_win']:.2f}%")
+                col2.metric("平均損失", f"{trade_metrics['avg_loss']:.2f}%")
+                col3.metric("最大連勝", f"{trade_metrics['max_win_streak']}")
+                col4.metric("最大連敗", f"{trade_metrics['max_loss_streak']}")
+
+                st.markdown("##### ストップ発動")
+                col1, col2 = st.columns(2)
+                col1.metric("損切り発動回数", f"{trade_metrics['stop_loss_count']}")
+                col2.metric("トレーリングストップ発動回数", f"{trade_metrics['trailing_stop_count']}")
+
         with st.expander("取引履歴を表示"):
             st.dataframe(trades_df)
 

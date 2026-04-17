@@ -167,8 +167,8 @@ def main():
         st.stop()
 
     with st.spinner('バックテストを実行中...'):
-        results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params)).encode()).hexdigest()
-        results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params)
+        results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params) + strategy_type).encode()).hexdigest()
+        results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type)
         metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
 
     if metrics:
@@ -212,6 +212,24 @@ def main():
                 col1, col2 = st.columns(2)
                 col1.metric("損切り発動回数", f"{trade_metrics['stop_loss_count']}")
                 col2.metric("トレーリングストップ発動回数", f"{trade_metrics['trailing_stop_count']}")
+
+        # #7 Exit理由別分析
+        if trade_metrics and 'exit_breakdown' in trade_metrics and trade_metrics['exit_breakdown']:
+            st.markdown("##### Exit理由別分析")
+            _reason_labels = {
+                'stop': '損切り', 'trail': 'トレーリング', 'signal': 'シグナル',
+                'target': '目標到達', 'time': '時間切れ', 'partial': '部分利確', 'structure': '構造トレイル'
+            }
+            breakdown_rows = []
+            for reason, stats in trade_metrics['exit_breakdown'].items():
+                breakdown_rows.append({
+                    'Exit理由': _reason_labels.get(reason, reason),
+                    '回数': stats['count'],
+                    '勝率(%)': stats['win_rate'],
+                    '平均損益(%)': stats['avg_pnl_pct'],
+                    '平均保有日数': stats['avg_hold_days'],
+                })
+            st.dataframe(pd.DataFrame(breakdown_rows), hide_index=True, use_container_width=True)
 
         with st.expander("取引履歴を表示"):
             st.dataframe(trades_df)

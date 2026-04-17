@@ -23,7 +23,9 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.cache_data.clear()
         st.rerun()
 
-    strategy_type = st.sidebar.selectbox("戦略タイプ", ["トレンドフォロー", "逆張り"], index=["トレンドフォロー", "逆張り"].index(st.session_state.strategy_type))
+    _strategy_options = ["トレンドフォロー", "逆張り", "レジーム切替"]
+    _strategy_idx = _strategy_options.index(st.session_state.strategy_type) if st.session_state.strategy_type in _strategy_options else 0
+    strategy_type = st.sidebar.selectbox("戦略タイプ", _strategy_options, index=_strategy_idx)
     if strategy_type != st.session_state.strategy_type:
         st.session_state.strategy_type = strategy_type
         st.rerun()
@@ -39,14 +41,15 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     end_date = st.sidebar.date_input("終了日", end_date)
 
     st.sidebar.header("技術分析設定")
-    
+
     # 動的に表示するパラメータを決定
     visible_params = list(params_config.keys())
     if strategy_type == "トレンドフォロー":
         visible_params = [p for p in visible_params if 'dev' not in p and 'lower' not in p and 'upper' not in p]
-    else: # 逆張り
+    elif strategy_type == "逆張り":
         visible_params = [p for p in visible_params if 'macd' not in p and 'window' not in p and p != 'adx_threshold'
                           and p != 'score_smooth_period' and p != 'ema_slope_period']
+    # レジーム切替: 全パラメータを表示
 
     # セッションステートのパラメータを直接更新
     for key in visible_params:

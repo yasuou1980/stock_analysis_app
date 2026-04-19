@@ -707,7 +707,7 @@ def calculate_position_size(price, volatility, portfolio_value, strategy, params
     return 0
 
 @st.cache_data
-def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type="トレンドフォロー"):
+def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type="トレンドフォロー", pyramid_threshold=0.10):
     """バックテスト実行"""
     portfolio = {'cash': initial_capital, 'shares': 0}
     portfolio_values = []
@@ -718,7 +718,7 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
     highest_price_since_entry = 0
     pyramid_count = 0
     max_pyramid_count = 2
-    pyramid_threshold = 0.10
+    # pyramid_threshold はプリセットごとに指定（スイング: 0.06 / 長期: 0.08）
     stop_loss_atr_mult = 2.0
     trailing_atr_mult = 3.0
     hold_days = 0
@@ -750,10 +750,12 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
             pnl_pct_now = (row['close'] - current_entry_price) / current_entry_price
 
             if current_atr > 0:
+                # トレイリング幅を緩めて「勝ち馬を走らせる」
+                # +20% 超 & RSI 過熱: 2.2 (旧 1.8) / +10% 超: 2.8 (旧 2.2) / それ以下: 3.0
                 if pnl_pct_now > 0.20 and row.get('rsi', 0) > 70:
-                    dynamic_trailing_mult = 1.8
-                elif pnl_pct_now > 0.10:
                     dynamic_trailing_mult = 2.2
+                elif pnl_pct_now > 0.10:
+                    dynamic_trailing_mult = 2.8
                 else:
                     dynamic_trailing_mult = trailing_atr_mult
                 new_trailing = highest_price_since_entry - current_atr * dynamic_trailing_mult
@@ -899,8 +901,18 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
             else:  # TREND / BREAKOUT / NEUTRAL
                 exited = False
 
-                # #1 Chandelier Exit: EMA21構造トレイル（含み益5%超でEMA21割れ）
-                if not exited and pnl_pct > 0.05 and 'ema21' in _data.columns and row['close'] < row['ema21']:
+                # 強トレンド判定: ADX > 28 または EMA slope > 1% (#3 時間減衰 Exit のスキップ条件)
+                _adx_col_bt = next((c for c in _data.columns if c.startswith('ADX')), None)
+                _adx_val_bt = row.get(_adx_col_bt, 0) if _adx_col_bt else 0
+                _slope_val_bt = row.get('ema_slope', 0)
+                is_strong_trend = (
+                    (pd.notna(_adx_val_bt) and _adx_val_bt > 28)
+                    or (pd.notna(_slope_val_bt) and _slope_val_bt > 1.0)
+                )
+
+                # #1 Chandelier Exit: EMA21構造トレイル（含み益8%超でEMA21割れ）
+                # 初動ノイズでの早期キルを防ぐため閾値を 5% → 8% に引き上げ
+                if not exited and pnl_pct > 0.08 and 'ema21' in _data.columns and row['close'] < row['ema21']:
                     sell_price = row['close'] * (1 - slippage)
                     revenue = portfolio['shares'] * sell_price * (1 - commission_rate)
                     trades.append({'date': _data.index[i], 'action': 'SELL', 'exit_reason': 'structure',
@@ -925,7 +937,8 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
                     partial_taken = True
 
                 # #3 時間減衰Exit（N日保有で+0.5R未満なら手仕舞い）
-                elif not exited and hold_days >= time_decay_days and r_pct > 0 and pnl_pct < (0.5 * r_pct):
+                # 強トレンド中(ADX>28 or EMA slope>1%)は踊り場でのキルを避けるためスキップ
+                elif not exited and hold_days >= time_decay_days and r_pct > 0 and pnl_pct < (0.5 * r_pct) and not is_strong_trend:
                     sell_price = row['close'] * (1 - slippage)
                     revenue = portfolio['shares'] * sell_price * (1 - commission_rate)
                     trades.append({'date': _data.index[i], 'action': 'SELL', 'exit_reason': 'time',

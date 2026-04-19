@@ -23,16 +23,18 @@ def main():
     TICKERS = config.get('tickers', {}).get('default_tickers', ["SOXL", "SOXS", "NVDA", "AMD", "TSM"])
     PRESETS = {
         "スイングトレード": {
-            'short_window': 10, 'long_window': 40, 'rsi_period': 10, 'macd_fast': 10, 'macd_slow': 20, 'macd_signal': 7,
+            'short_window': 10, 'long_window': 50, 'rsi_period': 10, 'macd_fast': 10, 'macd_slow': 20, 'macd_signal': 7,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
             'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
-            'adx_threshold': 20, 'score_smooth_period': 3, 'ema_slope_period': 5
+            'adx_threshold': 18, 'score_smooth_period': 3, 'ema_slope_period': 5,
+            'pyramid_threshold': 0.06
         },
         "長期投資": {
-            'short_window': 50, 'long_window': 200, 'rsi_period': 30, 'macd_fast': 30, 'macd_slow': 60, 'macd_signal': 15,
+            'short_window': 40, 'long_window': 200, 'rsi_period': 30, 'macd_fast': 30, 'macd_slow': 60, 'macd_signal': 15,
             'bb_length': 20, 'bb_std': 2.0, 'stoch_k': 14, 'stoch_d': 3,
             'dev_upper': 10, 'dev_lower': -10, 'rsi_upper': 70, 'rsi_lower': 30, 'stoch_upper': 80, 'stoch_lower': 20,
-            'adx_threshold': 25, 'score_smooth_period': 5, 'ema_slope_period': 8
+            'adx_threshold': 22, 'score_smooth_period': 5, 'ema_slope_period': 8,
+            'pyramid_threshold': 0.08
         }
     }
     params_config = {
@@ -167,8 +169,9 @@ def main():
         st.stop()
 
     with st.spinner('バックテストを実行中...'):
-        results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params) + strategy_type).encode()).hexdigest()
-        results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type)
+        pyramid_thr = float(params.get('pyramid_threshold', 0.10))
+        results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params) + strategy_type + str(pyramid_thr)).encode()).hexdigest()
+        results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type, pyramid_thr)
         metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
 
     if metrics:

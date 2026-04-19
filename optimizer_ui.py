@@ -18,8 +18,9 @@ def evaluate_performance(params, raw_data, strategy_type):
     data = calculate_indicators_and_signals(data_hash, raw_data, params, strategy_type)
     if data.empty: return None
 
-    results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params)).encode()).hexdigest()
-    results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params)
+    pyramid_thr = float(params.get('pyramid_threshold', 0.10))
+    results_hash = hashlib.sha256((str(data.values.tobytes()) + str(initial_capital) + str(commission_rate) + str(slippage) + position_sizing_strategy + str(ps_params) + strategy_type + str(pyramid_thr)).encode()).hexdigest()
+    results = backtest_strategy(results_hash, data, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type, pyramid_thr)
     metrics = calculate_performance_metrics(results['portfolio_values'], results['dates'])
 
     return metrics
@@ -66,15 +67,15 @@ def _phase1_grid(preset_choice, strategy_type):
         if preset_choice == "スイングトレード":
             return {
                 'short_window': [10, 15, 20],   # 3
-                'long_window': [35, 50, 65],     # 3
-                'adx_threshold': [20, 25],       # 2
+                'long_window': [40, 50, 65],     # 3 (プリセット 50 を中央に配置)
+                'adx_threshold': [18, 22],       # 2 (プリセット 18 を下限に合わせる)
             }  # = 18 通り
         else:  # 長期投資
             return {
-                'short_window': [40, 60],        # 2
+                'short_window': [30, 40, 50],    # 3 (プリセット 40 を中央に配置)
                 'long_window': [150, 200],       # 2
-                'adx_threshold': [25, 30],       # 2
-            }  # = 8 通り
+                'adx_threshold': [22, 28],       # 2 (プリセット 22 を下限に合わせる)
+            }  # = 12 通り
     else:  # 逆張り
         return {
             'rsi_upper': [70, 75],   # 2

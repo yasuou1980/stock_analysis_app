@@ -1,7 +1,7 @@
 import streamlit as st
 from datetime import datetime, timedelta
 from utils import save_settings, load_settings
-from optimizer_ui import run_optimization
+from optimizer_ui import run_optimization, auto_optimize_silent
 
 def setup_sidebar(TICKERS, PRESETS, params_config):
     st.sidebar.title("設定")
@@ -9,12 +9,12 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     # --- Session State Initialization ---
     if 'ticker' not in st.session_state: 
         st.session_state.ticker = TICKERS[0]
-    if 'params' not in st.session_state: 
-        st.session_state.params = PRESETS["スイングトレード"]
+    if 'params' not in st.session_state:
+        st.session_state.params = PRESETS["スイングトレード"].copy()
     if 'preset_choice' not in st.session_state:
         st.session_state.preset_choice = "スイングトレード"
     if 'strategy_type' not in st.session_state:
-        st.session_state.strategy_type = "トレンドフォロー"
+        st.session_state.strategy_type = "逆張り"
 
     # --- UI Components ---
     ticker_choice = st.sidebar.selectbox("ティッカー", TICKERS, index=TICKERS.index(st.session_state.ticker) if st.session_state.ticker in TICKERS else 0)
@@ -23,7 +23,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.cache_data.clear()
         st.rerun()
 
-    _strategy_options = ["トレンドフォロー", "逆張り", "レジーム切替"]
+    _strategy_options = ["逆張り", "トレンドフォロー", "レジーム切替"]
     _strategy_idx = _strategy_options.index(st.session_state.strategy_type) if st.session_state.strategy_type in _strategy_options else 0
     strategy_type = st.sidebar.selectbox("戦略タイプ", _strategy_options, index=_strategy_idx)
     if strategy_type != st.session_state.strategy_type:
@@ -39,6 +39,23 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     end_date = datetime.now().date()
     start_date = st.sidebar.date_input("開始日", end_date - timedelta(days=3*365))
     end_date = st.sidebar.date_input("終了日", end_date)
+
+    # --- 戦略銘柄選択時の自動最適化 ---
+    # ticker / strategy / preset / 期間 が変わったときに限り自動で軽量最適化を実行し、
+    # 結果を params に反映する。キャッシュにより同一条件の再実行は即時。
+    opt_key = (ticker_choice, strategy_type, preset_choice,
+               start_date.isoformat(), end_date.isoformat())
+    if st.session_state.get('_last_opt_key') != opt_key:
+        base_params_for_opt = PRESETS[preset_choice].copy()
+        with st.sidebar.spinner("🔍 自動最適化中..."):
+            optimized = auto_optimize_silent(
+                ticker_choice, start_date.isoformat(), end_date.isoformat(),
+                preset_choice, strategy_type, base_params_for_opt
+            )
+        if optimized:
+            st.session_state.params = optimized
+            st.sidebar.success("✅ 自動最適化を適用しました")
+        st.session_state._last_opt_key = opt_key
 
     st.sidebar.header("技術分析設定")
 

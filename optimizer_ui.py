@@ -60,6 +60,29 @@ def _derive_trend_params(short_window, long_window, adx_threshold, preset_choice
         }
 
 
+def _phase1_grid(preset_choice, strategy_type):
+    """Phase 1 の粗い探索グリッドを返す。高速化のため要素数を絞っている。"""
+    if strategy_type == "トレンドフォロー":
+        if preset_choice == "スイングトレード":
+            return {
+                'short_window': [10, 15, 20],   # 3
+                'long_window': [35, 50, 65],     # 3
+                'adx_threshold': [20, 25],       # 2
+            }  # = 18 通り
+        else:  # 長期投資
+            return {
+                'short_window': [40, 60],        # 2
+                'long_window': [150, 200],       # 2
+                'adx_threshold': [25, 30],       # 2
+            }  # = 8 通り
+    else:  # 逆張り
+        return {
+            'rsi_upper': [70, 75],   # 2
+            'rsi_lower': [25, 30],   # 2
+            'bb_std': [2.0, 2.5],    # 2
+        }  # = 8 通り
+
+
 def _build_combinations(param_grid, base_params, preset_choice=None, strategy_type=None):
     """パラメータグリッドから全組み合わせを生成する。"""
     keys, values = zip(*param_grid.items())
@@ -107,6 +130,36 @@ def _search_best(combinations, raw_data, strategy_type, progress_bar, offset=0, 
     return best_sharpe, best_params_sharpe, best_return, best_params_return
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def auto_optimize_silent(ticker, start_date_iso, end_date_iso, preset_choice, strategy_type, base_params):
+    """UI なしで Phase 1 のみを実行して最良パラメータ (sharpe) を返す。
+
+    戦略銘柄選択時の自動最適化用。キャッシュが効くため、同一条件での再実行は即時。
+    対応戦略: トレンドフォロー / 逆張り（レジーム切替は None を返す）。
+    """
+    if strategy_type not in ("トレンドフォロー", "逆張り"):
+        return None
+
+    raw_data = load_data(ticker, start_date_iso, end_date_iso)
+    if raw_data is None:
+        return None
+
+    grid = _phase1_grid(preset_choice, strategy_type)
+    combos = _build_combinations(grid, dict(base_params), preset_choice, strategy_type)
+
+    best_sharpe = -999
+    best_params = None
+    for p in combos:
+        metrics = evaluate_performance(p, raw_data, strategy_type)
+        if metrics:
+            sharpe = metrics.get('sharpe_ratio', -999)
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_params = p.copy()
+
+    return best_params
+
+
 def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type):
     st.subheader(f"⚙️ {strategy_type}戦略の2段階最適化を実行中...")
 
@@ -120,30 +173,10 @@ def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type)
     # ========================================
     # Phase 1: 主要パラメータの粗い探索
     # ========================================
-    if strategy_type == "トレンドフォロー":
-        if preset_choice == "スイングトレード":
-            phase1_grid = {
-                'short_window': [8, 12, 15, 20],   # 4
-                'long_window': [35, 45, 55, 65],    # 4
-                'adx_threshold': [15, 20, 25],      # 3
-            }  # = 48 通り
-        else:  # 長期投資
-            phase1_grid = {
-                'short_window': [40, 50, 60],       # 3
-                'long_window': [150, 200, 250],     # 3
-                'adx_threshold': [20, 25, 30],      # 3
-            }  # = 27 通り
-    else:  # 逆張り
-        phase1_grid = {
-            'rsi_upper': [70, 75, 80],      # 3
-            'rsi_lower': [20, 25, 30],      # 3
-            'bb_std': [2.0, 2.5],           # 2
-            'dev_upper': [10, 15],          # 2
-            'dev_lower': [-15, -10],        # 2
-        }  # = 72 通り
+    phase1_grid = _phase1_grid(preset_choice, strategy_type)
 
     phase1_combos = _build_combinations(phase1_grid, base_params, preset_choice, strategy_type)
-    phase2_est = 27  # Phase 2 は最大 3^3 = 27
+    phase2_est = 8  # Phase 2 は最大 2^3 = 8
     total_est = len(phase1_combos) + phase2_est
 
     # 旧方式との比較表示
@@ -175,16 +208,16 @@ def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type)
         lw = phase1_best['long_window']
         adx = phase1_best['adx_threshold']
         if preset_choice == "スイングトレード":
-            step_sw, step_lw, step_adx = 2, 5, 3
+            step_sw, step_lw, step_adx = 3, 7, 3
             min_sw, min_lw = 5, 25
         else:
-            step_sw, step_lw, step_adx = 5, 20, 3
+            step_sw, step_lw, step_adx = 5, 25, 3
             min_sw, min_lw = 30, 100
 
         phase2_grid = {
-            'short_window': sorted(set([max(min_sw, sw - step_sw), sw, sw + step_sw])),
-            'long_window': sorted(set([max(min_lw, lw - step_lw), lw, lw + step_lw])),
-            'adx_threshold': sorted(set([max(10, adx - step_adx), adx, adx + step_adx])),
+            'short_window': sorted(set([max(min_sw, sw - step_sw), sw + step_sw])),
+            'long_window': sorted(set([max(min_lw, lw - step_lw), lw + step_lw])),
+            'adx_threshold': sorted(set([max(10, adx - step_adx), adx + step_adx])),
         }
     else:  # 逆張り
         ru = phase1_best.get('rsi_upper', 70)
@@ -192,9 +225,9 @@ def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type)
         bs = phase1_best.get('bb_std', 2.0)
 
         phase2_grid = {
-            'rsi_upper': sorted(set([max(60, ru - 3), ru, min(85, ru + 3)])),
-            'rsi_lower': sorted(set([max(15, rl - 3), rl, min(40, rl + 3)])),
-            'bb_std': sorted(set([max(1.5, round(bs - 0.25, 2)), bs, min(3.0, round(bs + 0.25, 2))])),
+            'rsi_upper': sorted(set([max(60, ru - 3), min(85, ru + 3)])),
+            'rsi_lower': sorted(set([max(15, rl - 3), min(40, rl + 3)])),
+            'bb_std': sorted(set([max(1.5, round(bs - 0.25, 2)), min(3.0, round(bs + 0.25, 2))])),
         }
 
     phase2_combos = _build_combinations(phase2_grid, base_params, preset_choice, strategy_type)

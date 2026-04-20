@@ -152,7 +152,8 @@ def main():
     with st.spinner(f'{ticker} のデータを取得中...'):
         raw_data = load_data(ticker, start_date.isoformat(), end_date.isoformat())
 
-    if raw_data is None: 
+    if raw_data is None:
+        st.error(f"❌ ティッカー {ticker} のデータが見つかりません。期間やティッカーシンボルを確認してください。")
         st.stop()
 
     if quality_issues := validate_data_quality(raw_data):

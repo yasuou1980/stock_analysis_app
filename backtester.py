@@ -728,6 +728,10 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
     time_decay_days = 20
     time_stop_days_c = 10
 
+    # ADX列とema_slope列の存在を事前に解決（毎行再計算を避ける）
+    _adx_col_bt = next((c for c in _data.columns if isinstance(c, str) and c.startswith('ADX')), None)
+    _has_ema_slope = 'ema_slope' in _data.columns
+
     for i in range(len(_data)):
         row = _data.iloc[i]
         current_portfolio_value = portfolio['cash'] + (portfolio['shares'] * row['close'])
@@ -902,13 +906,20 @@ def backtest_strategy(data_hash, _data, initial_capital, commission_rate, slippa
                 exited = False
 
                 # 強トレンド判定: ADX > 28 または EMA slope > 1% (#3 時間減衰 Exit のスキップ条件)
-                _adx_col_bt = next((c for c in _data.columns if c.startswith('ADX')), None)
-                _adx_val_bt = row.get(_adx_col_bt, 0) if _adx_col_bt else 0
-                _slope_val_bt = row.get('ema_slope', 0)
-                is_strong_trend = (
-                    (pd.notna(_adx_val_bt) and _adx_val_bt > 28)
-                    or (pd.notna(_slope_val_bt) and _slope_val_bt > 1.0)
-                )
+                # numpy/pandas スカラーの曖昧な bool 変換を避けるため明示的に float へ変換する
+                try:
+                    _adx_val_bt = float(row[_adx_col_bt]) if _adx_col_bt else 0.0
+                except (TypeError, ValueError):
+                    _adx_val_bt = 0.0
+                try:
+                    _slope_val_bt = float(row['ema_slope']) if _has_ema_slope else 0.0
+                except (TypeError, ValueError):
+                    _slope_val_bt = 0.0
+                if _adx_val_bt != _adx_val_bt:  # NaN チェック
+                    _adx_val_bt = 0.0
+                if _slope_val_bt != _slope_val_bt:
+                    _slope_val_bt = 0.0
+                is_strong_trend = (_adx_val_bt > 28.0) or (_slope_val_bt > 1.0)
 
                 # #1 Chandelier Exit: EMA21構造トレイル（含み益8%超でEMA21割れ）
                 # 初動ノイズでの早期キルを防ぐため閾値を 5% → 8% に引き上げ

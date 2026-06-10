@@ -36,6 +36,7 @@ _mock_st.cache_data = _passthrough_cache
 sys.modules["streamlit"] = _mock_st
 
 from backtester import calculate_indicators_and_signals  # noqa: E402
+import signal_tracker  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 定数
@@ -233,6 +234,14 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
         save_to_db(db_path, rows)
         logger.info(f"DB 保存完了: {len(rows)} 件 → {db_path}")
         save_to_text(results_dir, run_date, rows, errors)
+
+    # シグナル実績トラッキング (履歴 CSV 追記 + 精度レポート再生成)
+    # 失敗してもバッチ本体は成功扱いにする
+    if not dry_run:
+        try:
+            signal_tracker.update(rows, results_dir)
+        except Exception as e:
+            logger.error(f"実績トラッキング更新エラー: {e}", exc_info=True)
 
     logger.info(f"=== バッチ完了: 成功 {len(rows)} 件 / エラー {len(errors)} 件 ===")
     if errors:

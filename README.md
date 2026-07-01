@@ -113,6 +113,20 @@ stock_analysis_app/
     └── daily_run.yml       # GitHub Actions 定時実行ワークフロー
 ```
 
+## 📱 Scriptable (iOS) 対応
+
+`scriptable/StockSignal.js` に、日次シグナル判定ロジック（トレンドフォロー・逆張り）を JavaScript に移植したスクリプトを用意しています。Streamlit のフル機能（バックテスト・パラメータ最適化・チャート）は含みませんが、iPhone 単体で好きな銘柄のシグナルをその場で確認できます。
+
+- Yahoo Finance の chart API から直接データ取得（`yfinance` 相当、pandas 非依存）
+- `backtester.py` の `calculate_indicators_and_signals`（トレンドフォロー / 逆張り）と同じパラメータ・ロジックで最新シグナルを計算
+- ティッカーは実行のたびにダイアログで入力可能（前回入力値を記憶するので気軽に差し替えて確認できる）
+- ホーム画面ウィジェットとしても利用可能（ウィジェットパラメータにティッカーを指定）
+
+**セットアップ:**
+1. [Scriptable](https://apps.apple.com/app/scriptable/id1405459188) アプリを iPhone にインストール
+2. `scriptable/StockSignal.js` の中身をコピーし、Scriptable 内で新規スクリプトとして貼り付け・保存
+3. スクリプトを実行するとティッカー入力ダイアログが表示される
+
 ## ⚠️ 免責事項
 
 このツールは教育および情報提供のみを目的としています。提供される情報や分析結果は投資助言を構成するものではありません。実際の投資判断はご自身の責任と判断において行ってください。

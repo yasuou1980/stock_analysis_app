@@ -25,6 +25,42 @@ const PARAMS = {
   adx_threshold: 20,
 };
 
+// 商品クラス定義 (config.toml の [ticker_classes] と同期すること)
+// inverse_lev: 構造的減価があるため BUY シグナル禁止
+// long_lev:    急落後の反発が大きいため SELL シグナルを制限
+const TICKER_CLASSES = {
+  inverse_lev: ["SOXS", "SQQQ", "SPXS"],
+  long_lev: ["SOXL", "TQQQ", "UPRO", "TECL", "TSLL", "NUGT", "FNGG"],
+};
+
+function resolveTickerClass(ticker) {
+  const t = ticker.toUpperCase();
+  for (const cls of Object.keys(TICKER_CLASSES)) {
+    if (TICKER_CLASSES[cls].includes(t)) return cls;
+  }
+  return "plain";
+}
+
+// backtester.py compute_signal_gates() の移植。
+// 実測 (results/signals_history.csv の onset 分析) に基づく負けパターン遮断:
+// - インバース型レバETFの BUY 禁止 (逆張りBUY 勝率19% 平均-13.9%)
+// - ロング型レバETFのトレンドSELL 禁止 (勝率7-18% 平均-12〜-18%)
+// - 5日で-12%超の急落直後の SELL 禁止 (投げ売りの底で売らない)
+// - 逆張りSELLは RSI>=50 かつ 乖離率-3〜+15% かつ 急落直後でない場合のみ
+function computeSignalGates(tickerClass, ind, i) {
+  const { close, rsi, deviation } = ind;
+  const ret5 = i >= 5 && close[i - 5] ? close[i] / close[i - 5] - 1 : 0;
+  const isInverse = tickerClass === "inverse_lev";
+  const isLongLev = tickerClass === "long_lev";
+  const crashCooldown = ret5 < -0.12;
+
+  const buyOk = !isInverse;
+  const trendSellOk = isInverse ? true : isLongLev ? false : !crashCooldown;
+  const counterSellOk = !isLongLev
+    && rsi[i] >= 50 && deviation[i] >= -3 && deviation[i] <= 15 && ret5 > -0.10;
+  return { buyOk, trendSellOk, counterSellOk };
+}
+
 // ---------------------------------------------------------------------------
 // 配列ユーティリティ（pandas の shift / rolling / ewm 相当）
 // ---------------------------------------------------------------------------
@@ -239,7 +275,7 @@ function weeklyTrendUp(dates, close, wkShort, wkLong) {
 // ---------------------------------------------------------------------------
 // トレンドフォロー戦略 (backtester.py L236-402 相当)
 // ---------------------------------------------------------------------------
-function computeTrendStrategy(ind, params) {
+function computeTrendStrategy(ind, params, gates) {
   const { dates, close, high, low, volume, smaShort, smaLong, rsi, macd, macdh, bbl, bbu,
           adx, dmp, dmn, volSma, ema50, psar, psarDir } = ind;
   const n = close.length;
@@ -363,8 +399,8 @@ function computeTrendStrategy(ind, params) {
   const sellThresholdAdj = sellThreshold + (weeklyUp ? -1.5 : 0);
 
   const structureBroken = close[i] < ema50[i];
-  const buy = scores[i] >= buyThresholdAdj && volCondition[i];
-  const sell = scores[i] <= sellThresholdAdj && structureBroken;
+  const buy = scores[i] >= buyThresholdAdj && volCondition[i] && gates.buyOk;
+  const sell = scores[i] <= sellThresholdAdj && structureBroken && gates.trendSellOk;
 
   return { signal: buy ? "BUY" : sell ? "SELL" : "HOLD", score: scores[i] };
 }
@@ -372,7 +408,7 @@ function computeTrendStrategy(ind, params) {
 // ---------------------------------------------------------------------------
 // 逆張り戦略 (backtester.py L432-549 相当)
 // ---------------------------------------------------------------------------
-function computeCounterStrategy(ind, params) {
+function computeCounterStrategy(ind, params, gates) {
   const { close, smaShort, smaLong, rsi, macdh, bbl, bbu, deviation, stochK, stochD, ema200 } = ind;
   const n = close.length;
   const { stoch_upper: stochUpper, stoch_lower: stochLower, rsi_upper: rsiUpper, rsi_lower: rsiLower } = params;
@@ -429,7 +465,7 @@ function computeCounterStrategy(ind, params) {
 
   let oversoldRecent = -Infinity;
   for (let k = Math.max(0, i - 2); k <= i; k++) oversoldRecent = Math.max(oversoldRecent, counterScores[k]);
-  const buySignalC = oversoldRecent >= 5.0 && longTrendOk && !fallingKnife && reboundConfirm;
+  const buySignalC = oversoldRecent >= 5.0 && longTrendOk && !fallingKnife && reboundConfirm && gates.buyOk;
 
   const sellSignalC = counterScores[i] <= sellThresholdC && priceBreakDown;
 
@@ -442,7 +478,7 @@ function computeCounterStrategy(ind, params) {
   const earlySellSignalC = (profitTakeSignal || macdCrossDownC) && close[i] < smaShort[i];
 
   const strongUptrendBlock = uptrendMomentum && deviation[i] > 5;
-  const sellFinalC = (sellSignalC || earlySellSignalC) && !strongUptrendBlock;
+  const sellFinalC = (sellSignalC || earlySellSignalC) && !strongUptrendBlock && gates.counterSellOk;
 
   return { signal: buySignalC ? "BUY" : sellFinalC ? "SELL" : "HOLD", score: counterScores[i] };
 }
@@ -504,8 +540,9 @@ async function analyzeTicker(ticker) {
   const bars = await fetchDaily(ticker);
   const ind = buildIndicators(bars, PARAMS);
   const i = bars.close.length - 1;
-  const trend = computeTrendStrategy(ind, PARAMS);
-  const counter = computeCounterStrategy(ind, PARAMS);
+  const gates = computeSignalGates(resolveTickerClass(ticker), ind, i);
+  const trend = computeTrendStrategy(ind, PARAMS, gates);
+  const counter = computeCounterStrategy(ind, PARAMS, gates);
   return {
     ticker,
     date: bars.dates[i],

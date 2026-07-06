@@ -5,6 +5,13 @@
 # Streamlit アプリのサイドバーに表示する銘柄
 default_tickers = ["SOXL", "SOXS", "TQQQ", "FNGG", "TSLL", "NUGT", "SOFI", "CLSK"]
 
+[ticker_classes]
+# 商品クラス定義 (シグナルゲートで使用。未記載のティッカーは plain 扱い)
+# inverse_lev: インバース型レバレッジETF。構造的減価があるため BUY シグナル禁止
+# long_lev:    ロング型レバレッジETF。急落後の反発が大きいため SELL シグナルを制限
+inverse_lev = ["SOXS", "SQQQ", "SPXS"]
+long_lev = ["SOXL", "TQQQ", "UPRO", "TECL", "TSLL", "NUGT", "FNGG"]
+
 [batch]
 # バッチ実行で分析する銘柄リスト (Streamlit アプリとは独立して管理)
 tickers = [

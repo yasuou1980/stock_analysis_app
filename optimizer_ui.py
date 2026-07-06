@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import hashlib
 from data_loader import load_data
-from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics
+from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics, resolve_ticker_class
+from utils import load_config
 from datetime import datetime, timedelta
 import itertools
 
@@ -146,7 +147,8 @@ def auto_optimize_silent(ticker, start_date_iso, end_date_iso, preset_choice, st
         return None
 
     grid = _phase1_grid(preset_choice, strategy_type)
-    combos = _build_combinations(grid, dict(base_params), preset_choice, strategy_type)
+    base = {**dict(base_params), 'ticker_class': resolve_ticker_class(ticker, load_config())}
+    combos = _build_combinations(grid, base, preset_choice, strategy_type)
 
     best_sharpe = -999
     best_params = None
@@ -170,6 +172,7 @@ def run_optimization(ticker, start_date, end_date, preset_choice, strategy_type)
         return
 
     base_params = st.session_state.get('params', {}).copy()
+    base_params['ticker_class'] = resolve_ticker_class(ticker, load_config())
 
     # ========================================
     # Phase 1: 主要パラメータの粗い探索

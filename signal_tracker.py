@@ -35,7 +35,17 @@ REPORT_NAME = "performance_report.txt"
 # フォワードリターンの計測ホライズン (営業日)
 HORIZONS = (5, 10, 20)
 
-HISTORY_COLUMNS = ["signal_date", "ticker", "strategy", "signal", "close", "rsi", "deviation"]
+# score/adx/ret_5d/ticker_class は 2026-07 の計測強化で追加 (それ以前の行は NaN)
+HISTORY_COLUMNS = ["signal_date", "ticker", "strategy", "signal", "close", "rsi", "deviation",
+                   "score", "adx", "ret_5d", "ticker_class"]
+
+# シグナルロジックの変更履歴 (版別集計に使用)。
+# ロジックを変更したら「新ロジックで初めて計算される signal_date」を追記する。
+LOGIC_VERSIONS = [
+    ("2026-04-09", "v1 初期ロジック"),
+    ("2026-06-09", "v2 ナイフ回避・踏み上げ防止フィルタ"),
+    ("2026-07-06", "v3 商品クラスゲート・SELL発火適正化"),
+]
 
 _TXT_LINE_RE = re.compile(
     r"^\s+([A-Z]+)\s+(🟢 BUY|🔴 SELL|⚪ HOLD)\s+([\d.]+)\s+([\d.]+)\s+([+\-][\d.]+)%"
@@ -51,7 +61,8 @@ def load_history(results_dir: Path = RESULTS_DIR_DEFAULT) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=HISTORY_COLUMNS)
     df = pd.read_csv(path, dtype={"signal_date": str, "ticker": str, "strategy": str, "signal": str})
-    return df
+    # 旧フォーマットの CSV に後から追加された列を補完 (NaN 埋め)
+    return df.reindex(columns=HISTORY_COLUMNS)
 
 
 def save_history(df: pd.DataFrame, results_dir: Path = RESULTS_DIR_DEFAULT) -> None:
@@ -78,6 +89,10 @@ def ingest(rows: list[dict], results_dir: Path = RESULTS_DIR_DEFAULT) -> int:
             "close": r["close"],
             "rsi": r.get("rsi", np.nan),
             "deviation": r.get("deviation", np.nan),
+            "score": r.get("score", np.nan),
+            "adx": r.get("adx", np.nan),
+            "ret_5d": r.get("ret_5d", np.nan),
+            "ticker_class": r.get("ticker_class", np.nan),
         }
         for r in rows
     ])
@@ -147,7 +162,7 @@ def backfill_from_text(results_dir: Path = RESULTS_DIR_DEFAULT) -> pd.DataFrame:
     df = df[df["run_date"].isin(kept_dates)].copy()
     # データの日付 ≒ 実行日の前日 (JST 朝の実行時点で確定している米国市場の終値)
     df["signal_date"] = (pd.to_datetime(df["run_date"]) - pd.Timedelta(days=1)).dt.strftime("%Y-%m-%d")
-    df = df[HISTORY_COLUMNS]
+    df = df.reindex(columns=HISTORY_COLUMNS)
 
     # 既存履歴とマージ (実測の signal_date を持つ新形式の行を優先)
     hist = load_history(results_dir)
@@ -227,6 +242,44 @@ def summarize(onsets: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
     return pd.DataFrame(recs)
 
 
+def summarize_by_version(onsets: pd.DataFrame, horizons=(5, 10)) -> pd.DataFrame:
+    """ロジック版×戦略×シグナルごとの実績。境界は LOGIC_VERSIONS で定義。
+
+    ロジック変更が精度を実際に改善したかを、変更後に発生したシグナルだけで
+    確認するための集計。旧版の成績は変更後も不変なので、版をまたいだ
+    比較がそのまま A/B 比較になる。
+    """
+    if onsets.empty:
+        return pd.DataFrame()
+    boundaries = [(pd.Timestamp(d), label) for d, label in LOGIC_VERSIONS]
+
+    def version_of(ts):
+        current = boundaries[0][1]
+        for d, label in boundaries:
+            if ts >= d:
+                current = label
+        return current
+
+    o = onsets.copy()
+    o["version"] = o["signal_date"].map(version_of)
+    recs = []
+    for (version, strategy, signal), g in o.groupby(["version", "strategy", "signal"]):
+        for n in horizons:
+            vals = g[f"fwd_{n}d"].dropna()
+            if vals.empty:
+                continue
+            recs.append({
+                "version": version,
+                "strategy": strategy,
+                "signal": signal,
+                "horizon": n,
+                "n": len(vals),
+                "win_rate": 100.0 * (vals > 0).mean(),
+                "avg_pct": 100.0 * vals.mean(),
+            })
+    return pd.DataFrame(recs)
+
+
 # ---------------------------------------------------------------------------
 # レポート生成
 # ---------------------------------------------------------------------------
@@ -264,6 +317,22 @@ def write_report(results_dir: Path = RESULTS_DIR_DEFAULT, recent_days: int = 30)
                         f"  {signal:<8} {r.horizon:>3}d {r.n:>4} {r.win_rate:>6.1f}% "
                         f"{r.avg_pct:>+7.2f}% {r.median_pct:>+7.2f}%"
                     )
+
+    # ロジック版別の実績 (シグナル改善が効いたかの効果測定)
+    version_summary = summarize_by_version(onsets)
+    if not version_summary.empty:
+        lines.append("\n【ロジック版別実績】(改善効果の測定用。新しい版ほどサンプル少)")
+        for d, label in LOGIC_VERSIONS:
+            lines.append(f"  ・{label}: {d} 〜")
+        lines.append("")
+        lines.append(f"  {'版':<4} {'戦略':<10} {'シグナル':<5} {'日数':>4} {'件数':>4} {'勝率':>7} {'平均':>8}")
+        lines.append("  " + "-" * 58)
+        for r in version_summary.itertuples():
+            ver_tag = r.version.split()[0]
+            lines.append(
+                f"  {ver_tag:<4} {r.strategy:<10} {r.signal:<6} {r.horizon:>3}d {r.n:>4}"
+                f" {r.win_rate:>6.1f}% {r.avg_pct:>+7.2f}%"
+            )
 
     # 直近の新規シグナルと途中経過 (シグナルロジック変更後の検証用)
     if not onsets.empty:

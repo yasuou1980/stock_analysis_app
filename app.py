@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from utils import load_config, validate_date_range, validate_data_quality, safe_calculate_signal_strength
 from data_loader import load_data
 from ui_components import setup_sidebar
-from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics, calculate_trade_metrics
+from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics, calculate_trade_metrics, resolve_ticker_class
 from plotting import plot_performance
 
 # --- Page and Logging Configuration ---
@@ -61,6 +61,9 @@ def main():
 
     ticker, start_date, end_date, params, initial_capital, commission_rate, slippage, position_sizing_strategy, ps_params, strategy_type, run_optimization_clicked = setup_sidebar(TICKERS, PRESETS, params_config)
 
+    # 商品クラス (config.toml [ticker_classes]) をシグナル計算に渡す
+    params = {**params, 'ticker_class': resolve_ticker_class(ticker, config)}
+
     # --- 全ティッカーのサマリー表示機能 ---
     st.header("📈 全ティッカーの市場状況サマリー")
     
@@ -79,11 +82,12 @@ def main():
         for i, ticker_item in enumerate(TICKERS):
             status_text.text(f"分析中: {ticker_item} ({i+1}/{len(TICKERS)})...")
             raw_data = load_data(ticker_item, start_date_summary.isoformat(), end_date_summary.isoformat())
-            
+
             if raw_data is not None and not raw_data.empty:
+                item_params = {**default_params, 'ticker_class': resolve_ticker_class(ticker_item, config)}
                 # トレンドフォロー戦略の計算
-                trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(default_params) + "トレンドフォロー").encode()).hexdigest()
-                data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), default_params, "トレンドフォロー")
+                trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "トレンドフォロー").encode()).hexdigest()
+                data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), item_params, "トレンドフォロー")
                 if not data_trend.empty:
                     latest = data_trend.iloc[-1]
                     summary_data_trend.append({
@@ -95,8 +99,8 @@ def main():
                     })
 
                 # 逆張り戦略の計算
-                counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(default_params) + "逆張り").encode()).hexdigest()
-                data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), default_params, "逆張り")
+                counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "逆張り").encode()).hexdigest()
+                data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), item_params, "逆張り")
                 if not data_counter.empty:
                     latest = data_counter.iloc[-1]
                     summary_data_counter.append({

@@ -35,7 +35,7 @@ def _passthrough_cache(func=None, **kwargs):
 _mock_st.cache_data = _passthrough_cache
 sys.modules["streamlit"] = _mock_st
 
-from backtester import calculate_indicators_and_signals  # noqa: E402
+from backtester import calculate_indicators_and_signals, resolve_ticker_class  # noqa: E402
 import signal_tracker  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -101,9 +101,19 @@ def ensure_table(conn: sqlite3.Connection) -> None:
             composite_signal TEXT,
             rsi           REAL,
             deviation     REAL,
+            score         REAL,
+            adx           REAL,
+            ret_5d        REAL,
+            ticker_class  TEXT,
             UNIQUE(run_date, ticker, strategy)
         )
     """)
+    # 既存 DB へのカラム追加 (無ければ足す)
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(signals)")}
+    for col, coltype in [("score", "REAL"), ("adx", "REAL"),
+                         ("ret_5d", "REAL"), ("ticker_class", "TEXT")]:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE signals ADD COLUMN {col} {coltype}")
     conn.commit()
 
 
@@ -114,9 +124,11 @@ def save_to_db(db_path: Path, rows: list[dict]) -> None:
         ensure_table(conn)
         conn.executemany("""
             INSERT OR REPLACE INTO signals
-                (run_date, ticker, signal_date, strategy, close, composite_signal, rsi, deviation)
+                (run_date, ticker, signal_date, strategy, close, composite_signal, rsi, deviation,
+                 score, adx, ret_5d, ticker_class)
             VALUES
-                (:run_date, :ticker, :signal_date, :strategy, :close, :composite_signal, :rsi, :deviation)
+                (:run_date, :ticker, :signal_date, :strategy, :close, :composite_signal, :rsi, :deviation,
+                 :score, :adx, :ret_5d, :ticker_class)
         """, rows)
         conn.commit()
 
@@ -202,12 +214,17 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
             errors.append(ticker)
             continue
 
+        ticker_class = resolve_ticker_class(ticker, config)
+        ticker_params = {**params, "ticker_class": ticker_class}
+
         for strategy in strategies:
             try:
-                data = compute_signals(raw_data, params, strategy)
+                data = compute_signals(raw_data, ticker_params, strategy)
                 if data.empty:
                     continue
                 latest = data.iloc[-1]
+                score_col = "counter_score" if strategy == "逆張り" else "trend_score"
+                ret_5d = data["close"].pct_change(5).iloc[-1] if len(data) > 5 else np.nan
                 row = {
                     "run_date":         run_date,
                     "ticker":           ticker,
@@ -217,6 +234,11 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
                     "composite_signal": str(latest["composite_signal"]),
                     "rsi":              round(float(latest.get("rsi", np.nan)), 2),
                     "deviation":        round(float(latest.get("deviation", np.nan)), 4),
+                    # 検証用特徴量 (シグナル精度のバケット分析に使う)
+                    "score":            round(float(latest.get(score_col, np.nan)), 3),
+                    "adx":              round(float(latest.get("ADX_14", np.nan)), 2),
+                    "ret_5d":           round(float(ret_5d), 4) if pd.notna(ret_5d) else np.nan,
+                    "ticker_class":     ticker_class,
                 }
                 rows.append(row)
                 sig = row["composite_signal"]

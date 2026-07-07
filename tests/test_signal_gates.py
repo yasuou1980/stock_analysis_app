@@ -131,6 +131,14 @@ def test_counter_sell_gate_crash_cooldown():
 # ---------------------------------------------------------------------------
 # resolve_ticker_class
 # ---------------------------------------------------------------------------
+def test_dip_buy_gate_is_plain_only():
+    """押し目リバウンドBUYは plain のみ (long_lev は実測 10日勝率18.8%)"""
+    df = gate_frame(np.full(30, 100.0))
+    assert compute_signal_gates(df, TICKER_CLASS_PLAIN)["dip_buy_ok"].all()
+    assert not compute_signal_gates(df, TICKER_CLASS_LONG_LEV)["dip_buy_ok"].any()
+    assert not compute_signal_gates(df, TICKER_CLASS_INVERSE_LEV)["dip_buy_ok"].any()
+
+
 def test_resolve_ticker_class():
     config = {"ticker_classes": {
         "inverse_lev": ["SOXS", "SQQQ"],
@@ -174,6 +182,41 @@ def test_uptrend_produces_buy_for_plain_but_not_inverse():
     assert (plain["composite_signal"] == "BUY").any(), \
         "前提条件エラー: plain で BUY が出ない合成データではテストにならない"
     assert not (inverse["composite_signal"] == "BUY").any()
+
+
+def test_dip_rebound_buy_fires_for_plain_only():
+    """上昇トレンド内の押し目 (dd20<=-8% & 長期MA上維持 & 反発初動) で
+    逆張り戦略が BUY を出す。long_lev クラスでは同一データでも出ない。"""
+    rng = np.random.default_rng(21)
+    # 強い上昇 (長期MAとの乖離を+15%超に積み上げる) → 5日で約-10%の押し目 → 反発
+    # 乖離の貯金があるため押し目後も deviation>=0 を維持する = 質の高い押し目
+    up = 100.0 * np.cumprod(1 + 0.009 + rng.normal(0, 0.003, 150))
+    dip = up[-1] * np.cumprod(np.full(5, 0.98))
+    rebound = dip[-1] * np.cumprod(np.full(4, 1.01))
+    df = make_ohlcv(np.concatenate([up, dip, rebound]))
+
+    plain = run_signals(df.copy(), default_params(ticker_class=TICKER_CLASS_PLAIN),
+                        "逆張り")
+    tail = plain["composite_signal"].iloc[-9:]
+    assert (tail == "BUY").any(), \
+        "押し目リバウンド局面で逆張りBUYが発火するべき"
+
+    long_lev = run_signals(df.copy(), default_params(ticker_class=TICKER_CLASS_LONG_LEV),
+                           "逆張り")
+    assert not (long_lev["composite_signal"].iloc[-9:] == "BUY").any()
+
+
+def test_dip_rebound_buy_requires_deviation_above_zero():
+    """同じ押し目でも長期MA割れ (deviation<0) では発火しない (崩壊銘柄の除外)"""
+    rng = np.random.default_rng(22)
+    # 横ばい→急落: dd20 は -8% を超えるが deviation は負になる
+    flat = 100.0 + rng.normal(0, 0.3, 150)
+    crash = flat[-1] * np.cumprod(np.full(8, 0.982))
+    rebound = crash[-1] * np.cumprod(np.full(4, 1.01))
+    df = make_ohlcv(np.concatenate([flat, crash, rebound]))
+
+    data = run_signals(df, default_params(ticker_class=TICKER_CLASS_PLAIN), "逆張り")
+    assert not (data["composite_signal"].iloc[-13:] == "BUY").any()
 
 
 def test_downtrend_long_lev_never_sells():

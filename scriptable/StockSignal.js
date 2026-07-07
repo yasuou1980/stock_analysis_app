@@ -47,6 +47,7 @@ function resolveTickerClass(ticker) {
 // - ロング型レバETFのトレンドSELL 禁止 (勝率7-18% 平均-12〜-18%)
 // - 5日で-12%超の急落直後の SELL 禁止 (投げ売りの底で売らない)
 // - 逆張りSELLは RSI>=50 かつ 乖離率-3〜+15% かつ 急落直後でない場合のみ
+// - 押し目リバウンドBUY (dipBuyOk) は plain クラスのみ許可
 function computeSignalGates(tickerClass, ind, i) {
   const { close, rsi, deviation } = ind;
   const ret5 = i >= 5 && close[i - 5] ? close[i] / close[i - 5] - 1 : 0;
@@ -58,7 +59,8 @@ function computeSignalGates(tickerClass, ind, i) {
   const trendSellOk = isInverse ? true : isLongLev ? false : !crashCooldown;
   const counterSellOk = !isLongLev
     && rsi[i] >= 50 && deviation[i] >= -3 && deviation[i] <= 15 && ret5 > -0.10;
-  return { buyOk, trendSellOk, counterSellOk };
+  const dipBuyOk = !isInverse && !isLongLev;
+  return { buyOk, trendSellOk, counterSellOk, dipBuyOk };
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +467,16 @@ function computeCounterStrategy(ind, params, gates) {
 
   let oversoldRecent = -Infinity;
   for (let k = Math.max(0, i - 2); k <= i; k++) oversoldRecent = Math.max(oversoldRecent, counterScores[k]);
-  const buySignalC = oversoldRecent >= 5.0 && longTrendOk && !fallingKnife && reboundConfirm && gates.buyOk;
+  const oversoldBuyC = oversoldRecent >= 5.0 && longTrendOk && !fallingKnife && reboundConfirm && gates.buyOk;
+
+  // 押し目リバウンドBUY (backtester.py と同一): 20日高値から-8%超の押し目で
+  // 長期MA上 (deviation>=0) を維持したまま反発初動が出た日 (plain クラスのみ)
+  const roll20 = rollingMax(close, 20);
+  const dd20 = roll20[i] > 0 ? close[i] / roll20[i] - 1 : 0;
+  const reboundUp = close[i] > closePrev[i] || rsi[i] > rsiPrev[i];
+  const dipReboundBuy = gates.dipBuyOk && dd20 <= -0.08 && deviation[i] >= 0 && reboundUp;
+
+  const buySignalC = oversoldBuyC || dipReboundBuy;
 
   const sellSignalC = counterScores[i] <= sellThresholdC && priceBreakDown;
 

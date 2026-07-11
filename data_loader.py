@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import logging
 
@@ -9,6 +10,22 @@ logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
 _RETRY_WAIT_SEC = 2
+_DOWNLOAD_TIMEOUT_SEC = 120
+
+# yfinance の HTTP バックエンド (curl_cffi) はスレッドセーフではなく、
+# 複数スレッドから同じセッションに触れるとセグメンテーションフォルトで
+# プロセスごと落ちる。Streamlit は再実行 (rerun) のたびに新しいスレッドで
+# スクリプトを実行するため、yf.download を直接呼ぶと2回目以降の操作
+# (銘柄切替等) でクラッシュする。すべてのダウンロードをこの専用スレッド
+# 1本に閉じ込めることで、yfinance を常に同一スレッドから使う。
+_YF_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yf-download")
+
+
+def _download_in_worker(ticker, start, end):
+    future = _YF_EXECUTOR.submit(
+        yf.download, ticker, start=start, end=end, auto_adjust=True, progress=False
+    )
+    return future.result(timeout=_DOWNLOAD_TIMEOUT_SEC)
 
 
 class DataFetchError(Exception):
@@ -25,7 +42,7 @@ def _fetch_data(ticker, start_date_str, end_date_str):
     last_error = None
     for attempt in range(_MAX_RETRIES):
         try:
-            data = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+            data = _download_in_worker(ticker, start, end)
         except Exception as e:
             last_error = e
             data = None

@@ -1,4 +1,5 @@
 import streamlit as st
+import logging
 from datetime import datetime, timedelta
 from utils import save_settings, load_settings
 from optimizer_ui import run_optimization, auto_optimize_silent
@@ -19,8 +20,10 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     # --- UI Components ---
     ticker_choice = st.sidebar.selectbox("ティッカー", TICKERS, index=TICKERS.index(st.session_state.ticker) if st.session_state.ticker in TICKERS else 0)
     if ticker_choice != st.session_state.ticker:
+        # キャッシュはティッカー・期間ごとにキーが分かれているため、切替時に
+        # 全消去しない。全消去すると全銘柄サマリーの再ダウンロードが一斉に走り、
+        # Yahoo Finance のレート制限で全銘柄のデータ取得が失敗する。
         st.session_state.ticker = ticker_choice
-        st.cache_data.clear()
         st.rerun()
 
     _strategy_options = ["逆張り", "トレンドフォロー", "レジーム切替"]
@@ -47,11 +50,18 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
                start_date.isoformat(), end_date.isoformat())
     if st.session_state.get('_last_opt_key') != opt_key:
         base_params_for_opt = PRESETS[preset_choice].copy()
-        with st.sidebar.spinner("🔍 自動最適化中..."):
-            optimized = auto_optimize_silent(
-                ticker_choice, start_date.isoformat(), end_date.isoformat(),
-                preset_choice, strategy_type, base_params_for_opt
-            )
+        # 自動最適化はあくまで補助機能。データ取得失敗や計算エラーで
+        # アプリ全体が落ちないよう、失敗時はプリセット値のまま続行する。
+        try:
+            with st.sidebar.spinner("🔍 自動最適化中..."):
+                optimized = auto_optimize_silent(
+                    ticker_choice, start_date.isoformat(), end_date.isoformat(),
+                    preset_choice, strategy_type, base_params_for_opt
+                )
+        except Exception as e:
+            logging.getLogger(__name__).error(f"自動最適化に失敗しました ({ticker_choice}): {e}")
+            optimized = None
+            st.sidebar.warning("⚠️ 自動最適化に失敗したため、プリセット値を使用します")
         if optimized:
             st.session_state.params = optimized
             st.sidebar.success("✅ 自動最適化を適用しました")
@@ -115,7 +125,6 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
                 st.session_state.preset_choice = loaded['preset_choice']
             if 'strategy_type' in loaded:
                 st.session_state.strategy_type = loaded['strategy_type']
-            st.cache_data.clear()
             st.rerun()
 
     st.sidebar.header("最適化")

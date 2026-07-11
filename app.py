@@ -83,33 +83,37 @@ def main():
             status_text.text(f"分析中: {ticker_item} ({i+1}/{len(TICKERS)})...")
             raw_data = load_data(ticker_item, start_date_summary.isoformat(), end_date_summary.isoformat())
 
-            if raw_data is not None and not raw_data.empty:
-                item_params = {**default_params, 'ticker_class': resolve_ticker_class(ticker_item, config)}
-                # トレンドフォロー戦略の計算
-                trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "トレンドフォロー").encode()).hexdigest()
-                data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), item_params, "トレンドフォロー")
-                if not data_trend.empty:
-                    latest = data_trend.iloc[-1]
-                    summary_data_trend.append({
-                        'ティッカー': ticker_item,
-                        '現在価格': latest['close'],
-                        '総合シグナル': latest['composite_signal'],
-                        'RSI': latest['rsi'],
-                        'シグナル強度': int(safe_calculate_signal_strength(latest))
-                    })
+            # 1銘柄の計算エラーでページ全体が落ちないよう、銘柄ごとに隔離する
+            try:
+                if raw_data is not None and not raw_data.empty:
+                    item_params = {**default_params, 'ticker_class': resolve_ticker_class(ticker_item, config)}
+                    # トレンドフォロー戦略の計算
+                    trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "トレンドフォロー").encode()).hexdigest()
+                    data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), item_params, "トレンドフォロー")
+                    if not data_trend.empty:
+                        latest = data_trend.iloc[-1]
+                        summary_data_trend.append({
+                            'ティッカー': ticker_item,
+                            '現在価格': latest['close'],
+                            '総合シグナル': latest['composite_signal'],
+                            'RSI': latest['rsi'],
+                            'シグナル強度': int(safe_calculate_signal_strength(latest))
+                        })
 
-                # 逆張り戦略の計算
-                counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "逆張り").encode()).hexdigest()
-                data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), item_params, "逆張り")
-                if not data_counter.empty:
-                    latest = data_counter.iloc[-1]
-                    summary_data_counter.append({
-                        'ティッカー': ticker_item,
-                        '現在価格': latest['close'],
-                        '総合シグナル': latest['composite_signal'],
-                        'RSI': latest['rsi'],
-                        '乖離率(%)': latest.get('deviation', 0)
-                    })
+                    # 逆張り戦略の計算
+                    counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "逆張り").encode()).hexdigest()
+                    data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), item_params, "逆張り")
+                    if not data_counter.empty:
+                        latest = data_counter.iloc[-1]
+                        summary_data_counter.append({
+                            'ティッカー': ticker_item,
+                            '現在価格': latest['close'],
+                            '総合シグナル': latest['composite_signal'],
+                            'RSI': latest['rsi'],
+                            '乖離率(%)': latest.get('deviation', 0)
+                        })
+            except Exception as e:
+                logging.error(f"サマリー計算に失敗しました ({ticker_item}): {e}")
             progress_bar.progress((i + 1) / len(TICKERS))
 
         status_text.text(f"全{len(TICKERS)}ティッカーの分析が完了しました。")

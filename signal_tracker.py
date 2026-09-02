@@ -46,6 +46,7 @@ LOGIC_VERSIONS = [
     ("2026-06-09", "v2 ナイフ回避・踏み上げ防止フィルタ"),
     ("2026-07-06", "v3 商品クラスゲート・SELL発火適正化"),
     ("2026-07-07", "v4 押し目リバウンドBUY追加"),
+    ("2026-09-02", "v5 押し目リバウンドBUY撤回 (実測で予測を大幅に下回ったため)"),
 ]
 
 _TXT_LINE_RE = re.compile(
@@ -177,6 +178,34 @@ def backfill_from_text(results_dir: Path = RESULTS_DIR_DEFAULT) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # フォワードリターン計測
 # ---------------------------------------------------------------------------
+# 併合・分割の判定閾値。3倍レバETFでも原資産が±133%動かない限り
+# 1日でこの倍率には達しないため、超えた場合は株式分割/併合と判断する。
+SPLIT_RATIO = 4.0
+
+
+def adjust_for_splits(series: pd.Series, ratio: float = SPLIT_RATIO) -> pd.Series:
+    """未調整の株式分割/併合を検出し、価格系列を連続になるよう遡って補正する。
+
+    yfinance の終値が併合を反映しないまま記録されると、その日をまたぐ
+    フォワードリターンが桁違いの値になり平均値を壊す
+    (実例: SOXS 2026-07-15 に +889% の跳ね。トレンドSELLの10日平均が
+     -1.5% → -21.3% と 14 倍に歪んだ)。中央値は影響を受けないため、
+     歪みは平均値にのみ現れる = 発見しにくいバグだった。
+    """
+    s = series.dropna()
+    if len(s) < 2:
+        return series
+
+    step = s / s.shift(1)
+    is_split = (step >= ratio) | (step <= 1.0 / ratio)
+    if not is_split.any():
+        return series
+
+    # factor[j] = j より後に起きた全分割の倍率の積
+    factor = step.where(is_split, 1.0)[::-1].cumprod()[::-1].shift(-1).fillna(1.0)
+    return series.reindex(s.index).mul(factor).reindex(series.index)
+
+
 def compute_onset_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
     """新規シグナル発生ごとのフォワードリターンを計算する。
 
@@ -191,7 +220,8 @@ def compute_onset_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataF
 
     # 終値パネル (戦略間で終値は同一なので任意の戦略から構築)
     px = (hist.pivot_table(index="signal_date", columns="ticker", values="close", aggfunc="last")
-          .sort_index())
+          .sort_index()
+          .apply(adjust_for_splits))
 
     onsets = []
     for (strategy, ticker), g in hist.groupby(["strategy", "ticker"]):

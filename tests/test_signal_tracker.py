@@ -96,3 +96,45 @@ def test_write_report_contains_version_section(tmp_path):
     text = path.read_text()
     assert "シグナル実績レポート" in text
     assert "ロジック版別実績" in text
+
+
+# ---------------------------------------------------------------------------
+# 株式分割/併合の補正 (2026-09 の計測バグ修正)
+# ---------------------------------------------------------------------------
+def test_adjust_for_splits_makes_series_continuous():
+    """未調整の株式併合 (1:10) を検出し、遡って価格を揃える"""
+    idx = pd.date_range("2026-01-01", periods=6, freq="D")
+    s = pd.Series([10.0, 10.5, 10.2, 102.0, 101.0, 110.0], index=idx)
+
+    adj = signal_tracker.adjust_for_splits(s)
+
+    # 併合日をまたぐリターンが桁違いにならない
+    assert abs(adj.pct_change().iloc[3]) < 0.10
+    # 併合後の価格はそのまま、併合前は約10倍にスケールされる
+    assert adj.iloc[-1] == 110.0
+    assert 99.0 < adj.iloc[0] < 106.0   # 10.0 が併合比率 10 倍でスケールされる
+
+
+def test_adjust_for_splits_leaves_normal_series_untouched():
+    """通常の値動き (3倍レバETFの急変を含む) は補正しない"""
+    idx = pd.date_range("2026-01-01", periods=5, freq="D")
+    s = pd.Series([100.0, 130.0, 95.0, 140.0, 120.0], index=idx)
+    pd.testing.assert_series_equal(signal_tracker.adjust_for_splits(s), s)
+
+
+def test_split_artifact_does_not_distort_forward_returns():
+    """併合をまたぐ SELL の fwd リターンが -1000% 級にならない"""
+    dates = pd.bdate_range("2026-01-01", periods=8)
+    rows = []
+    for i, d in enumerate(dates):
+        # 5日目に 1:10 の併合 (10 → 100)
+        close = 10.0 if i < 5 else 100.0
+        rows.append({"signal_date": d.strftime("%Y-%m-%d"), "ticker": "SOXS",
+                     "strategy": "トレンドフォロー",
+                     "signal": "SELL" if i == 0 else "HOLD",
+                     "close": close, "rsi": 50.0, "deviation": 0.0,
+                     "score": np.nan, "adx": np.nan, "ret_5d": np.nan,
+                     "ticker_class": "inverse_lev"})
+    onsets = signal_tracker.compute_onset_performance(pd.DataFrame(rows), horizons=(5,))
+    assert len(onsets) == 1
+    assert abs(onsets["fwd_5d"].iloc[0]) < 0.10

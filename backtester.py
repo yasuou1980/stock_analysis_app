@@ -215,8 +215,6 @@ def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     - counter_sell_ok: 逆張りSELLは「強さが残る状態からの反落」のみ許可
         RSI>=50 かつ 乖離率 -3〜+15% かつ 5日リターン>-10%、ロング型レバETF除外
         (適用後: 90件 勝率32.2% → 31件 勝率45.2%、20日勝率 35.7% → 53.6%)
-    - dip_buy_ok: 押し目リバウンドBUY (下記) は plain クラスのみ許可
-        (同一トリガーでもロング型レバETFは 10日勝率18.8% と機能しない)
     """
     n = len(data)
     true_arr = np.ones(n, dtype=bool)
@@ -246,13 +244,10 @@ def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     else:
         counter_sell_ok = (rsi >= 50.0) & (dev >= -3.0) & (dev <= 15.0) & (ret5 > -0.10)
 
-    dip_buy_ok = false_arr if (is_inverse or is_long_lev) else true_arr
-
     return {
         'buy_ok': buy_ok,
         'trend_sell_ok': trend_sell_ok,
         'counter_sell_ok': counter_sell_ok,
-        'dip_buy_ok': dip_buy_ok,
     }
 
 
@@ -314,18 +309,6 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
         # 商品クラス別ゲート (実測の負けパターン遮断。詳細は compute_signal_gates 参照)
         ticker_class = params.get('ticker_class', TICKER_CLASS_PLAIN)
         gates = compute_signal_gates(data, ticker_class)
-
-        # 押し目リバウンドBUY (2026-07 実測分析より):
-        # このユニバースの「底」は RSI 40台・乖離ゼロ近辺で形成され、
-        # 売られすぎ系トリガー (RSI<30 等) では構造的に届かない。
-        # 「20日高値から-8%超の押し目」かつ「長期MA上を維持 (deviation>=0)」
-        # かつ「反発初動」の組合せは 10日勝率78.9%・平均+7.8% (n=19, plain銘柄)。
-        # 長期MA割れ (deviation<0) を許すと崩壊銘柄の連続ナイフ掴みになる
-        # (10日勝率21.7%まで悪化) ため deviation>=0 が生命線。
-        dd20 = data['close'] / data['close'].rolling(window=20, min_periods=5).max() - 1
-        rebound_up = (data['close'] > data['close'].shift(1)) | (data['rsi'] > data['rsi'].shift(1))
-        dip_rebound_buy = ((dd20 <= -0.08) & (data['deviation'] >= 0)
-                           & rebound_up & gates['dip_buy_ok'])
 
         if strategy_type == "トレンドフォロー":
             adx_threshold = params.get('adx_threshold', 20)
@@ -601,9 +584,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             oversold_recent = (pd.Series(counter_scores, index=data.index)
                                .rolling(window=3, min_periods=1).max() >= 5.0)
 
-            # 最終シグナル判定 (売られすぎ反発 + 押し目リバウンドの2系統)
-            oversold_buy_c = oversold_recent & long_trend_ok & ~falling_knife & rebound_confirm & gates['buy_ok']
-            buy_signal_c = oversold_buy_c | dip_rebound_buy
+            # 最終シグナル判定
+            buy_signal_c = oversold_recent & long_trend_ok & ~falling_knife & rebound_confirm & gates['buy_ok']
 
             # 従来の売り（ダウ理論的な直近安値割れ ＋ スコア低下）
             sell_signal_c = (counter_scores <= sell_threshold_c) & price_break_down
@@ -814,8 +796,7 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             # --- レジームに応じたシグナル選択 ---
             is_trend_r   = (data['regime'] == 'TREND') | (data['regime'] == 'BREAKOUT')
             is_counter_r = data['regime'] == 'COUNTER'
-            # 押し目リバウンドBUYはレジーム非依存 (強い銘柄の押し目は高ADX局面でも発生する)
-            comp_buy_r   = (is_trend_r & trend_buy_r) | (is_counter_r & counter_buy_r) | dip_rebound_buy
+            comp_buy_r   = (is_trend_r & trend_buy_r) | (is_counter_r & counter_buy_r)
             comp_sell_r  = (is_trend_r & trend_sell_r) | (is_counter_r & counter_sell_all_r)
             data['composite_signal'] = np.where(comp_buy_r, "BUY", np.where(comp_sell_r, "SELL", "HOLD"))
             data['trend_score']   = trend_sc_r

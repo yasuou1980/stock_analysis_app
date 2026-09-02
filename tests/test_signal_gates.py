@@ -95,16 +95,13 @@ def test_long_lev_blocks_sells():
     assert not gates["counter_sell_ok"].any()
 
 
-def test_plain_crash_cooldown_blocks_trend_sell():
-    """5日で-12%超の急落直後は投げ売りの底になりやすく新規SELL禁止"""
-    flat = np.full(30, 100.0)
-    crash = 100.0 * np.array([1.0, 0.95, 0.90, 0.87, 0.85, 0.84])
-    closes = np.concatenate([flat, crash])
-    df = gate_frame(closes)
+def test_plain_never_trend_sells():
+    """G6: plain 銘柄のトレンドSELL禁止 (43件・18銘柄 勝率37%、上昇/下落相場とも負け)。
+    BUY は制限しない。手仕舞いは ATR トレイリングストップが担当する"""
+    df = gate_frame(np.full(30, 100.0))
     gates = compute_signal_gates(df, TICKER_CLASS_PLAIN)
-    assert gates["trend_sell_ok"][10]          # 平常時は許可
-    assert not gates["trend_sell_ok"][-1]      # 5日で-16%の直後は禁止
-    assert gates["buy_ok"].all()               # BUY は制限しない
+    assert not gates["trend_sell_ok"].any()
+    assert gates["buy_ok"].all()
 
 
 @pytest.mark.parametrize("rsi,dev,expected", [
@@ -160,6 +157,8 @@ def test_strategies_run_and_emit_valid_signals(strategy):
     data = run_signals(df, default_params(), strategy)
     assert not data.empty
     assert set(data["composite_signal"].unique()) <= {"BUY", "SELL", "HOLD"}
+    # シャドー計測用の生シグナルも同じ語彙で必ず出力される
+    assert set(data["raw_signal"].unique()) <= {"BUY", "SELL", "HOLD"}
 
 
 def test_uptrend_produces_buy_for_plain_but_not_inverse():
@@ -174,20 +173,29 @@ def test_uptrend_produces_buy_for_plain_but_not_inverse():
     assert (plain["composite_signal"] == "BUY").any(), \
         "前提条件エラー: plain で BUY が出ない合成データではテストにならない"
     assert not (inverse["composite_signal"] == "BUY").any()
+    # シャドー計測: ゲートに止められた BUY は raw_signal に残る
+    assert (inverse["raw_signal"] == "BUY").any()
+    assert (inverse["raw_signal"] == "BUY").sum() == (plain["composite_signal"] == "BUY").sum()
 
 
-def test_downtrend_long_lev_never_sells():
-    """下落データでも long_lev クラスではトレンドSELLが出ない (トレイリングストップが担当)"""
+def test_downtrend_trend_sell_only_for_inverse():
+    """下落データでトレンドSELLが出るのはインバース型のみ (G2/G6)。
+    plain / long_lev は最終シグナルには出ないが raw_signal には残る (シャドー計測)"""
     rng = np.random.default_rng(11)
     up = 100.0 * np.cumprod(1 + 0.004 + rng.normal(0, 0.01, 150))
     down = up[-1] * np.cumprod(1 - 0.008 + rng.normal(0, 0.02, 150))
     df = make_ohlcv(np.concatenate([up, down]))
 
+    inverse = run_signals(df.copy(), default_params(ticker_class=TICKER_CLASS_INVERSE_LEV),
+                          "トレンドフォロー")
     plain = run_signals(df.copy(), default_params(ticker_class=TICKER_CLASS_PLAIN),
                         "トレンドフォロー")
     long_lev = run_signals(df.copy(), default_params(ticker_class=TICKER_CLASS_LONG_LEV),
                            "トレンドフォロー")
 
-    assert (plain["composite_signal"] == "SELL").any(), \
-        "前提条件エラー: plain で SELL が出ない合成データではテストにならない"
+    assert (inverse["composite_signal"] == "SELL").any(), \
+        "前提条件エラー: inverse で SELL が出ない合成データではテストにならない"
+    assert not (plain["composite_signal"] == "SELL").any()
     assert not (long_lev["composite_signal"] == "SELL").any()
+    # 抑制された SELL は raw_signal で追跡できる (件数はゲート無しの inverse と一致)
+    assert (plain["raw_signal"] == "SELL").sum() == (inverse["composite_signal"] == "SELL").sum() > 0

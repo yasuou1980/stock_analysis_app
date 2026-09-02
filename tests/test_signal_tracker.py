@@ -96,6 +96,7 @@ def test_write_report_contains_version_section(tmp_path):
     text = path.read_text()
     assert "シグナル実績レポート" in text
     assert "ロジック版別実績" in text
+    assert "ゲートで抑制されたシグナルの成績" in text
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +139,40 @@ def test_split_artifact_does_not_distort_forward_returns():
     onsets = signal_tracker.compute_onset_performance(pd.DataFrame(rows), horizons=(5,))
     assert len(onsets) == 1
     assert abs(onsets["fwd_5d"].iloc[0]) < 0.10
+
+
+# ---------------------------------------------------------------------------
+# シャドー計測 (ゲートが止めたシグナルのフォワード検証, 2026-09)
+# ---------------------------------------------------------------------------
+def test_ingest_records_raw_signal(tmp_path):
+    rows = [{"signal_date": "2026-09-02", "ticker": "AAPL", "strategy": "トレンドフォロー",
+             "close": 100.0, "composite_signal": "HOLD", "raw_signal": "SELL",
+             "rsi": 40.0, "deviation": -2.0}]
+    signal_tracker.ingest(rows, tmp_path)
+    hist = signal_tracker.load_history(tmp_path)
+    assert hist.loc[0, "signal"] == "HOLD"
+    assert hist.loc[0, "raw_signal"] == "SELL"
+
+
+def test_suppressed_performance_tracks_gated_signals():
+    """ゲートが止めた SELL のその後 (価格上昇 = 止めて正解) を直接計測できる"""
+    dates = pd.bdate_range("2026-09-01", periods=8)
+    rows = [{
+        "signal_date": d.strftime("%Y-%m-%d"), "ticker": "AAPL", "strategy": "トレンドフォロー",
+        "signal": "HOLD",                              # ゲート適用後
+        "raw_signal": "SELL" if i == 0 else "HOLD",    # ゲート適用前
+        "close": 100.0 + 2.0 * i,                      # その後上昇 → SELL は不正解 = 止めて正解
+        "rsi": 40.0, "deviation": -2.0,
+    } for i, d in enumerate(dates)]
+    sup = signal_tracker.compute_suppressed_performance(pd.DataFrame(rows), horizons=(5,))
+    assert len(sup) == 1
+    assert sup["signal"].iloc[0] == "SELL" and sup["actual_signal"].iloc[0] == "HOLD"
+    assert sup["fwd_5d"].iloc[0] < 0
+
+
+def test_suppressed_performance_ignores_rows_without_raw_signal():
+    """raw_signal の無い旧形式の行 (2026-09 以前) は対象外"""
+    hist = pd.DataFrame([{"signal_date": "2026-06-01", "ticker": "AAPL", "strategy": "トレンドフォロー",
+                          "signal": "SELL", "close": 100.0, "rsi": 40.0, "deviation": 0.0,
+                          "raw_signal": np.nan}])
+    assert signal_tracker.compute_suppressed_performance(hist).empty

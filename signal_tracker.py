@@ -36,8 +36,10 @@ REPORT_NAME = "performance_report.txt"
 HORIZONS = (5, 10, 20)
 
 # score/adx/ret_5d/ticker_class は 2026-07 の計測強化で追加 (それ以前の行は NaN)
+# raw_signal は 2026-09 のシャドー計測で追加: ゲート適用前の生シグナル。
+# signal (最終) と raw_signal (生) が異なる行 = ゲートが抑制したシグナル
 HISTORY_COLUMNS = ["signal_date", "ticker", "strategy", "signal", "close", "rsi", "deviation",
-                   "score", "adx", "ret_5d", "ticker_class"]
+                   "score", "adx", "ret_5d", "ticker_class", "raw_signal"]
 
 # シグナルロジックの変更履歴 (版別集計に使用)。
 # ロジックを変更したら「新ロジックで初めて計算される signal_date」を追記する。
@@ -47,6 +49,7 @@ LOGIC_VERSIONS = [
     ("2026-07-06", "v3 商品クラスゲート・SELL発火適正化"),
     ("2026-07-07", "v4 押し目リバウンドBUY追加"),
     ("2026-09-02", "v5 押し目リバウンドBUY撤回 (実測で予測を大幅に下回ったため)"),
+    ("2026-09-02", "v6 plain銘柄のトレンドSELL禁止 (G6) + シャドー計測開始"),
 ]
 
 _TXT_LINE_RE = re.compile(
@@ -95,6 +98,7 @@ def ingest(rows: list[dict], results_dir: Path = RESULTS_DIR_DEFAULT) -> int:
             "adx": r.get("adx", np.nan),
             "ret_5d": r.get("ret_5d", np.nan),
             "ticker_class": r.get("ticker_class", np.nan),
+            "raw_signal": r.get("raw_signal", np.nan),
         }
         for r in rows
     ])
@@ -251,6 +255,28 @@ def compute_onset_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataF
     return out.reset_index(drop=True)
 
 
+def compute_suppressed_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
+    """ゲートが抑制したシグナル (シャドー計測) のフォワードリターン。
+
+    raw_signal (ゲート適用前) を正とみなして onset を取り、その時点の最終シグナル
+    (signal) が raw と異なる = ゲートに止められたものだけを返す。
+    ゲートの遡及シミュレーションは「同じ状況で同じ onset が出た」という近似だが、
+    こちらは実際に止めたシグナルのその後を直接測るため、ゲートの妥当性検証として厳密。
+    2026-09 以降の行にのみ raw_signal がある。
+    """
+    if hist.empty or "raw_signal" not in hist.columns:
+        return pd.DataFrame()
+    shadow = hist[hist["raw_signal"].notna()].copy()
+    if shadow.empty:
+        return pd.DataFrame()
+    shadow["actual_signal"] = shadow["signal"]
+    shadow["signal"] = shadow["raw_signal"]
+    onsets = compute_onset_performance(shadow, horizons)
+    if onsets.empty:
+        return onsets
+    return onsets[onsets["actual_signal"] != onsets["signal"]].reset_index(drop=True)
+
+
 def summarize(onsets: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
     """戦略×シグナル×ホライズンごとの 件数 / 勝率 / 平均 / 中央値"""
     if onsets.empty:
@@ -363,6 +389,22 @@ def write_report(results_dir: Path = RESULTS_DIR_DEFAULT, recent_days: int = 30)
             lines.append(
                 f"  {ver_tag:<4} {r.strategy:<10} {r.signal:<6} {r.horizon:>3}d {r.n:>4}"
                 f" {r.win_rate:>6.1f}% {r.avg_pct:>+7.2f}%"
+            )
+
+    # シャドー計測: ゲートが実際に止めたシグナルのその後 (ゲートの妥当性検証)
+    suppressed = compute_suppressed_performance(hist)
+    lines.append("\n【ゲートで抑制されたシグナルの成績】(シャドー計測)")
+    lines.append("  ※ 勝率が低いほどゲートが正しく機能している (止めて正解だった割合 = 100% - 勝率)")
+    sup_summary = summarize(suppressed) if not suppressed.empty else pd.DataFrame()
+    if sup_summary.empty:
+        lines.append("  (2026-09 以降のシグナルから記録開始。まだ集計可能なデータなし)")
+    else:
+        lines.append(f"  {'戦略':<10} {'シグナル':<5} {'日数':>4} {'件数':>4} {'勝率':>7} {'平均':>8} {'中央値':>8}")
+        lines.append("  " + "-" * 58)
+        for r in sup_summary.itertuples():
+            lines.append(
+                f"  {r.strategy:<10} {r.signal:<6} {r.horizon:>3}d {r.n:>4} {r.win_rate:>6.1f}% "
+                f"{r.avg_pct:>+7.2f}% {r.median_pct:>+7.2f}%"
             )
 
     # 直近の新規シグナルと途中経過 (シグナルロジック変更後の検証用)

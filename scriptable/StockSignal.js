@@ -44,18 +44,18 @@ function resolveTickerClass(ticker) {
 // backtester.py compute_signal_gates() の移植。
 // 実測 (results/signals_history.csv の onset 分析) に基づく負けパターン遮断:
 // - インバース型レバETFの BUY 禁止 (逆張りBUY 勝率19% 平均-13.9%)
-// - ロング型レバETFのトレンドSELL 禁止 (勝率7-18% 平均-12〜-18%)
-// - 5日で-12%超の急落直後の SELL 禁止 (投げ売りの底で売らない)
+// - トレンドSELL はインバース型レバETFのみ許可 (減価継続の売り 勝率55% 平均+4.9%)。
+//   ロング型レバETF (勝率19%) と plain 銘柄 (43件・18銘柄 勝率37%、上昇相場46%・
+//   下落相場15% と両局面で負け) は禁止。構造崩れ確認後の売りは遅く反発に轢かれる
 // - 逆張りSELLは RSI>=50 かつ 乖離率-3〜+15% かつ 急落直後でない場合のみ
 function computeSignalGates(tickerClass, ind, i) {
   const { close, rsi, deviation } = ind;
   const ret5 = i >= 5 && close[i - 5] ? close[i] / close[i - 5] - 1 : 0;
   const isInverse = tickerClass === "inverse_lev";
   const isLongLev = tickerClass === "long_lev";
-  const crashCooldown = ret5 < -0.12;
 
   const buyOk = !isInverse;
-  const trendSellOk = isInverse ? true : isLongLev ? false : !crashCooldown;
+  const trendSellOk = isInverse;
   const counterSellOk = !isLongLev
     && rsi[i] >= 50 && deviation[i] >= -3 && deviation[i] <= 15 && ret5 > -0.10;
   return { buyOk, trendSellOk, counterSellOk };

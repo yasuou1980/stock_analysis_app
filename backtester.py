@@ -205,13 +205,17 @@ def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     - buy_ok: インバース型レバETFのBUY禁止
         (逆張りBUY 31件 勝率19% 平均-13.9% / トレンドBUY 2件 勝率0%。
          構造的減価がある商品の押し目買い・順張り買いはどちらも機能しない)
-    - trend_sell_ok:
-        * ロング型レバETFのSELL禁止 (14件 勝率7-18% 平均-12〜-18%。
-          EMA50割れ確認後では下げが出切っており、3倍の反発に轢かれる。
-          手仕舞いは ATR トレイリングストップ側が担当する)
-        * 非インバース銘柄は 5日で-12%超の急落直後のSELL禁止
-          (13件 勝率21-38% 平均-6〜-7.6%。投げ売りの底で売らない)
-        * インバース型は制限なし (減価継続の売りは 12件 勝率75% 平均+14.3%)
+    - trend_sell_ok: トレンドSELLはインバース型レバETFのみ許可
+        * インバース型は制限なし (減価継続の売り 20件 勝率55% 平均+4.9%、
+          20日勝率59% 平均+9.8%)
+        * ロング型レバETFは禁止 (16件 勝率19% 平均-13.7%。EMA50割れ確認後では
+          下げが出切っており、3倍の反発に轢かれる)
+        * plain 銘柄も禁止 (G6, 2026-09 追加: 43件・18銘柄 勝率36.6% 平均-1.75%。
+          上昇相場 46%・下落相場 15% と両局面で負け、RSI/乖離率/下落率の
+          どのバケットにも両期間で勝てる残存群が無い。構造崩れ確認後の売りは
+          遅すぎて 5〜20 日の反発に轢かれる。旧 G3 (急落直後の SELL 禁止) は
+          この規則に包含される)
+        手仕舞いは ATR トレイリングストップ側が担当する
     - counter_sell_ok: 逆張りSELLは「強さが残る状態からの反落」のみ許可
         RSI>=50 かつ 乖離率 -3〜+15% かつ 5日リターン>-10%、ロング型レバETF除外
         (適用後: 90件 勝率32.2% → 31件 勝率45.2%、20日勝率 35.7% → 53.6%)
@@ -227,17 +231,8 @@ def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     is_inverse = ticker_class == TICKER_CLASS_INVERSE_LEV
     is_long_lev = ticker_class == TICKER_CLASS_LONG_LEV
 
-    crash_cooldown = ret5 < -0.12
-
-    if is_inverse:
-        buy_ok = false_arr
-        trend_sell_ok = true_arr
-    elif is_long_lev:
-        buy_ok = true_arr
-        trend_sell_ok = false_arr
-    else:
-        buy_ok = true_arr
-        trend_sell_ok = ~crash_cooldown
+    buy_ok = false_arr if is_inverse else true_arr
+    trend_sell_ok = true_arr if is_inverse else false_arr
 
     if is_long_lev:
         counter_sell_ok = false_arr
@@ -469,13 +464,19 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             buy_threshold_adj  = buy_threshold  + np.where(weekly_up, 0.0, 1.5)
             sell_threshold_adj = sell_threshold + np.where(weekly_down, 0.0, -1.5)
 
-            buy_signal  = (scores >= buy_threshold_adj)  & vol_condition & gates['buy_ok']
+            buy_raw     = (scores >= buy_threshold_adj)  & vol_condition
+            buy_signal  = buy_raw & gates['buy_ok']
             # SELL は出来高フィルタを外す（薄商いの下落でエグジットが遅れるのを防ぐ）
             # 代わりに構造確認を要求: 中期EMA(50)を割り込むまで新規SELLを出さない。
             # 価格がEMA50より上での売りはレンジのダマシが多い（実測: 勝率0%・平均-23.7%）
             structure_broken = (data['close'] < data['ema50']).values
-            sell_signal = (scores <= sell_threshold_adj) & structure_broken & gates['trend_sell_ok']
+            sell_raw    = (scores <= sell_threshold_adj) & structure_broken
+            sell_signal = sell_raw & gates['trend_sell_ok']
 
+            # raw_signal = ゲート適用前の生シグナル (シャドー計測用)。
+            # 最終シグナルと異なる行 = ゲートが止めたシグナル。その後の値動きを
+            # 追跡することで、ゲートの妥当性をフォワードで直接検証できる
+            data['raw_signal'] = np.where(buy_raw, "BUY", np.where(sell_raw, "SELL", "HOLD"))
             data['composite_signal'] = np.where(buy_signal, "BUY", np.where(sell_signal, "SELL", "HOLD"))
 
             # --- エグジット専用シグナル（利確スコア制）---
@@ -585,7 +586,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
                                .rolling(window=3, min_periods=1).max() >= 5.0)
 
             # 最終シグナル判定
-            buy_signal_c = oversold_recent & long_trend_ok & ~falling_knife & rebound_confirm & gates['buy_ok']
+            buy_raw_c = oversold_recent & long_trend_ok & ~falling_knife & rebound_confirm
+            buy_signal_c = buy_raw_c & gates['buy_ok']
 
             # 従来の売り（ダウ理論的な直近安値割れ ＋ スコア低下）
             sell_signal_c = (counter_scores <= sell_threshold_c) & price_break_down
@@ -623,7 +625,9 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             data['counter_score'] = counter_scores
             # 逆張りSELLは「強さが残る状態からの反落」のみ許可
             # (売られた後の売りは平均回帰と逆行する。実測 勝率32%→45%)
-            sell_final_c = (sell_signal_c | early_sell_signal_c) & ~strong_uptrend_block & gates['counter_sell_ok']
+            sell_raw_c = (sell_signal_c | early_sell_signal_c) & ~strong_uptrend_block
+            sell_final_c = sell_raw_c & gates['counter_sell_ok']
+            data['raw_signal'] = np.where(buy_raw_c, "BUY", np.where(sell_raw_c, "SELL", "HOLD"))
             data['composite_signal'] = np.where(buy_signal_c, "BUY",
                                        np.where(sell_final_c, "SELL", "HOLD"))
 
@@ -726,10 +730,12 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             else:
                 bthr_r = 5.5; sthr_r = -5.0
 
-            trend_buy_r  = (trend_sc_r >= bthr_r) & vol_cond_r & mtf_buy_r & gates['buy_ok']
+            trend_buy_raw_r = (trend_sc_r >= bthr_r) & vol_cond_r & mtf_buy_r
+            trend_buy_r  = trend_buy_raw_r & gates['buy_ok']
             # SELL は出来高フィルタの代わりに構造確認（EMA50割れ）を要求
             structure_broken_r = (data['close'] < data['ema50']).values
-            trend_sell_r = (trend_sc_r <= sthr_r) & structure_broken_r & mtf_sell_r & gates['trend_sell_ok']
+            trend_sell_raw_r = (trend_sc_r <= sthr_r) & structure_broken_r & mtf_sell_r
+            trend_sell_r = trend_sell_raw_r & gates['trend_sell_ok']
 
             exit_sc_r = np.zeros(len(data))
             exit_sc_r += np.where((data['close'] < data['sma_short']) & (data['close'].shift(1) >= data['sma_short'].shift(1)), 1.5, 0)
@@ -772,7 +778,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             rebound_cr = (data['close'] > data['close'].shift(1)) | (data['rsi'] > data['rsi'].shift(1))
             osr_cr = (pd.Series(counter_sc_r, index=data.index)
                       .rolling(window=3, min_periods=1).max() >= 5.0)
-            counter_buy_r  = osr_cr & lt_ok_cr & ~knife_cr & rebound_cr & gates['buy_ok']
+            counter_buy_raw_r = osr_cr & lt_ok_cr & ~knife_cr & rebound_cr
+            counter_buy_r  = counter_buy_raw_r & gates['buy_ok']
             counter_sell_r = (counter_sc_r <= sell_thr_cr) & pbdn_r
             rob_r = data['rsi'].rolling(5).max() >= rsi_upper
             smabr_r = (data['close'] < data['sma_short']) & (data['close'].shift(1) >= data['sma_short'].shift(1))
@@ -780,7 +787,8 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
                             & (data['close'] < data['sma_short'])
             # 強い上昇トレンド中の逆張り売り禁止
             strong_up_block_r = uptrend_cr & (data['deviation'] > 5)
-            counter_sell_all_r = (counter_sell_r | early_sell_cr) & ~strong_up_block_r & gates['counter_sell_ok']
+            counter_sell_raw_r = (counter_sell_r | early_sell_cr) & ~strong_up_block_r
+            counter_sell_all_r = counter_sell_raw_r & gates['counter_sell_ok']
 
             c_exit_r = np.zeros(len(data))
             c_exit_r += np.where((data['rsi'] > 50) & (data['rsi'].shift(1) <= 50), 1.5, 0)
@@ -798,6 +806,9 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             is_counter_r = data['regime'] == 'COUNTER'
             comp_buy_r   = (is_trend_r & trend_buy_r) | (is_counter_r & counter_buy_r)
             comp_sell_r  = (is_trend_r & trend_sell_r) | (is_counter_r & counter_sell_all_r)
+            raw_buy_r    = (is_trend_r & trend_buy_raw_r) | (is_counter_r & counter_buy_raw_r)
+            raw_sell_r   = (is_trend_r & trend_sell_raw_r) | (is_counter_r & counter_sell_raw_r)
+            data['raw_signal'] = np.where(raw_buy_r, "BUY", np.where(raw_sell_r, "SELL", "HOLD"))
             data['composite_signal'] = np.where(comp_buy_r, "BUY", np.where(comp_sell_r, "SELL", "HOLD"))
             data['trend_score']   = trend_sc_r
             data['counter_score'] = counter_sc_r

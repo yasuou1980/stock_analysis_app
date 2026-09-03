@@ -44,21 +44,15 @@ function resolveTickerClass(ticker) {
 // backtester.py compute_signal_gates() の移植。
 // 実測 (results/signals_history.csv の onset 分析) に基づく負けパターン遮断:
 // - インバース型レバETFの BUY 禁止 (逆張りBUY 勝率19% 平均-13.9%)
-// - トレンドSELL はインバース型レバETFのみ許可 (減価継続の売り 勝率55% 平均+4.9%)。
-//   ロング型レバETF (勝率19%) と plain 銘柄 (43件・18銘柄 勝率37%、上昇相場46%・
-//   下落相場15% と両局面で負け) は禁止。構造崩れ確認後の売りは遅く反発に轢かれる
-// - 逆張りSELLは RSI>=50 かつ 乖離率-3〜+15% かつ 急落直後でない場合のみ
+// - SELL は両戦略ともインバース型レバETFのみ許可 (G7)。4年バックフィルの
+//   ベースレート超過(10日): inverse トレンドSELL +22.3pt / 逆張りSELL +18.2pt に対し、
+//   plain は -0.9 / -2.6pt、long_lev は -1.1 / -4.7pt。日次リバランスによる
+//   構造的減価だけが再現性のあるショート対象
+// - 旧 G5 (逆張りSELLを RSI>=50 かつ 乖離率-3〜+15% に限定) は廃止。現物株想定の
+//   帯がインバース型を構造的に締め出していた (該当149件のうち131件を誤って遮断)
 function computeSignalGates(tickerClass, ind, i) {
-  const { close, rsi, deviation } = ind;
-  const ret5 = i >= 5 && close[i - 5] ? close[i] / close[i - 5] - 1 : 0;
   const isInverse = tickerClass === "inverse_lev";
-  const isLongLev = tickerClass === "long_lev";
-
-  const buyOk = !isInverse;
-  const trendSellOk = isInverse;
-  const counterSellOk = !isLongLev
-    && rsi[i] >= 50 && deviation[i] >= -3 && deviation[i] <= 15 && ret5 > -0.10;
-  return { buyOk, trendSellOk, counterSellOk };
+  return { buyOk: !isInverse, trendSellOk: isInverse, counterSellOk: isInverse };
 }
 
 // ---------------------------------------------------------------------------

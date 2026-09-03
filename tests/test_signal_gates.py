@@ -95,39 +95,27 @@ def test_long_lev_blocks_sells():
     assert not gates["counter_sell_ok"].any()
 
 
-def test_plain_never_trend_sells():
-    """G6: plain 銘柄のトレンドSELL禁止 (43件・18銘柄 勝率37%、上昇/下落相場とも負け)。
-    BUY は制限しない。手仕舞いは ATR トレイリングストップが担当する"""
+def test_inverse_allows_both_sell_channels():
+    """G7: インバース型は減価継続の売りが唯一エッジを持つため両戦略のSELLを許可。
+    4年バックフィルの10日エッジ: トレンド +22.3pt / 逆張り +18.2pt"""
+    df = gate_frame(np.full(30, 100.0), rsi=30.0, deviation=-40.0)
+    gates = compute_signal_gates(df, TICKER_CLASS_INVERSE_LEV)
+    # 旧G5の帯 (RSI>=50 かつ 乖離-3〜+15) から外れていても許可される。
+    # 減価で乖離が大きくマイナスに沈むインバース型を締め出していたのが旧実装の誤り
+    assert gates["counter_sell_ok"].all()
+    assert gates["trend_sell_ok"].all()
+
+
+def test_plain_never_sells():
+    """G7: plain 銘柄は両戦略とも SELL 禁止 (4年検証の10日エッジ: トレンド -0.9pt /
+    逆張り -2.6pt)。BUY は制限しない。手仕舞いは ATR トレイリングストップが担当"""
     df = gate_frame(np.full(30, 100.0))
     gates = compute_signal_gates(df, TICKER_CLASS_PLAIN)
     assert not gates["trend_sell_ok"].any()
+    assert not gates["counter_sell_ok"].any()
     assert gates["buy_ok"].all()
 
 
-@pytest.mark.parametrize("rsi,dev,expected", [
-    (55.0, 5.0, True),     # 強さが残る状態からの反落 → 許可
-    (45.0, 5.0, False),    # RSI<50 = すでに売られた後 → 禁止
-    (55.0, -5.0, False),   # 乖離マイナス圏 = 下げた後の売り → 禁止
-    (55.0, 20.0, False),   # 乖離+15%超 = 強モメンタム (踏み上げ) → 禁止
-])
-def test_counter_sell_gate_conditions(rsi, dev, expected):
-    """逆張りSELLは RSI>=50 かつ 乖離率-3〜+15% のみ許可 (実測 勝率32%→45%)"""
-    df = gate_frame(np.full(30, 100.0), rsi=rsi, deviation=dev)
-    gates = compute_signal_gates(df, TICKER_CLASS_PLAIN)
-    assert bool(gates["counter_sell_ok"][-1]) is expected
-
-
-def test_counter_sell_gate_crash_cooldown():
-    """急落直後 (5日で-10%超) は逆張りSELLも禁止 (実測 勝率12-17%)"""
-    closes = np.concatenate([np.full(30, 100.0), [95.0, 92.0, 90.0, 89.0, 88.0]])
-    df = gate_frame(closes, rsi=60.0, deviation=5.0)
-    gates = compute_signal_gates(df, TICKER_CLASS_PLAIN)
-    assert not gates["counter_sell_ok"][-1]
-
-
-# ---------------------------------------------------------------------------
-# resolve_ticker_class
-# ---------------------------------------------------------------------------
 def test_resolve_ticker_class():
     config = {"ticker_classes": {
         "inverse_lev": ["SOXS", "SQQQ"],

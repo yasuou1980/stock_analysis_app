@@ -210,6 +210,45 @@ def adjust_for_splits(series: pd.Series, ratio: float = SPLIT_RATIO) -> pd.Serie
     return series.reindex(s.index).mul(factor).reindex(series.index)
 
 
+def _price_panel(hist: pd.DataFrame) -> pd.DataFrame:
+    """signal_date × ticker の終値パネル (分割補正済み)。
+
+    戦略間で終値は同一なので任意の戦略の行から構築する。呼び出し前に
+    hist["signal_date"] は pd.to_datetime 済みであること。
+    """
+    return (hist.pivot_table(index="signal_date", columns="ticker", values="close", aggfunc="last")
+            .sort_index()
+            .apply(adjust_for_splits))
+
+
+def compute_base_rates(hist: pd.DataFrame, horizons=HORIZONS) -> dict:
+    """「何もせず全銘柄を単純保有した場合」のフォワードリターン (ベースレート)。
+
+    シグナルの勝率は、同期間に銘柄をランダムに持っていただけでも上がる
+    確率を上回って初めて意味を持つ。この関数はその比較対象を計算する。
+    戻り値: {horizon: {"n": 観測数, "up_rate": 上昇した割合(%), "avg_pct": 平均リターン(%)}}
+    """
+    if hist.empty:
+        return {}
+
+    hist = hist.copy()
+    hist["signal_date"] = pd.to_datetime(hist["signal_date"])
+    panel = _price_panel(hist)
+
+    rates = {}
+    for n in horizons:
+        fwd = panel.shift(-n) / panel - 1
+        vals = fwd.stack().dropna()
+        if vals.empty:
+            continue
+        rates[n] = {
+            "n": len(vals),
+            "up_rate": 100.0 * (vals > 0).mean(),
+            "avg_pct": 100.0 * vals.mean(),
+        }
+    return rates
+
+
 def compute_onset_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
     """新規シグナル発生ごとのフォワードリターンを計算する。
 
@@ -222,10 +261,7 @@ def compute_onset_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.DataF
     hist = hist.copy()
     hist["signal_date"] = pd.to_datetime(hist["signal_date"])
 
-    # 終値パネル (戦略間で終値は同一なので任意の戦略から構築)
-    px = (hist.pivot_table(index="signal_date", columns="ticker", values="close", aggfunc="last")
-          .sort_index()
-          .apply(adjust_for_splits))
+    px = _price_panel(hist)
 
     onsets = []
     for (strategy, ticker), g in hist.groupby(["strategy", "ticker"]):
@@ -277,8 +313,13 @@ def compute_suppressed_performance(hist: pd.DataFrame, horizons=HORIZONS) -> pd.
     return onsets[onsets["actual_signal"] != onsets["signal"]].reset_index(drop=True)
 
 
-def summarize(onsets: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
-    """戦略×シグナル×ホライズンごとの 件数 / 勝率 / 平均 / 中央値"""
+def summarize(onsets: pd.DataFrame, horizons=HORIZONS, base_rates: dict | None = None) -> pd.DataFrame:
+    """戦略×シグナル×ホライズンごとの 件数 / 勝率 / 平均 / 中央値。
+
+    base_rates (compute_base_rates の戻り値) を渡すと、同期間に何もせず
+    保有しただけの場合との差分 (エッジ) を追加で計算する。SELL は fwd_{n}d が
+    符号反転済み (下落が「勝ち」) のため、比較対象のベースレートも反転させる。
+    """
     if onsets.empty:
         return pd.DataFrame()
     recs = []
@@ -287,14 +328,34 @@ def summarize(onsets: pd.DataFrame, horizons=HORIZONS) -> pd.DataFrame:
             vals = g[f"fwd_{n}d"].dropna()
             if vals.empty:
                 continue
+            win_rate = 100.0 * (vals > 0).mean()
+            avg_pct = 100.0 * vals.mean()
+
+            base = base_rates.get(n) if base_rates else None
+            if base is None:
+                base_win_rate = base_avg_pct = edge_win_rate = edge_avg_pct = np.nan
+            else:
+                if signal == "SELL":
+                    base_win_rate = 100.0 - base["up_rate"]
+                    base_avg_pct = -base["avg_pct"]
+                else:
+                    base_win_rate = base["up_rate"]
+                    base_avg_pct = base["avg_pct"]
+                edge_win_rate = win_rate - base_win_rate
+                edge_avg_pct = avg_pct - base_avg_pct
+
             recs.append({
                 "strategy": strategy,
                 "signal": signal,
                 "horizon": n,
                 "n": len(vals),
-                "win_rate": 100.0 * (vals > 0).mean(),
-                "avg_pct": 100.0 * vals.mean(),
+                "win_rate": win_rate,
+                "avg_pct": avg_pct,
                 "median_pct": 100.0 * vals.median(),
+                "base_win_rate": base_win_rate,
+                "base_avg_pct": base_avg_pct,
+                "edge_win_rate": edge_win_rate,
+                "edge_avg_pct": edge_avg_pct,
             })
     return pd.DataFrame(recs)
 
@@ -347,7 +408,8 @@ def write_report(results_dir: Path = RESULTS_DIR_DEFAULT, recent_days: int = 30)
         return None
 
     onsets = compute_onset_performance(hist)
-    summary = summarize(onsets)
+    base_rates = compute_base_rates(hist)
+    summary = summarize(onsets, base_rates=base_rates)
 
     dates = pd.to_datetime(hist["signal_date"]).sort_values().unique()
     lines: list[str] = []
@@ -359,21 +421,35 @@ def write_report(results_dir: Path = RESULTS_DIR_DEFAULT, recent_days: int = 30)
     lines.append("")
     lines.append("※ SELL の勝率は「シグナル後に価格が下落した割合」")
     lines.append("※ 直近のシグナルはホライズン分の将来データが揃うまで集計対象外")
+    lines.append("※ ベース = 同期間・全銘柄の単純保有。エッジ(勝率差/平均差)がプラスで初めて価値がある")
 
     if summary.empty:
         lines.append("\n(集計可能な新規シグナルがまだありません)")
     else:
+        has_base = base_rates and summary["base_win_rate"].notna().any()
         for strategy in summary["strategy"].unique():
             lines.append(f"\n【{strategy}】")
-            lines.append(f"  {'シグナル':<6} {'日数':>4} {'件数':>4} {'勝率':>7} {'平均':>8} {'中央値':>8}")
-            lines.append("  " + "-" * 50)
+            if has_base:
+                lines.append(f"  {'シグナル':<6} {'日数':>4} {'件数':>4} {'勝率':>7} {'ベース':>7} {'エッジ':>7}"
+                             f" {'平均':>8} {'平均エッジ':>9}")
+                lines.append("  " + "-" * 68)
+            else:
+                lines.append(f"  {'シグナル':<6} {'日数':>4} {'件数':>4} {'勝率':>7} {'平均':>8} {'中央値':>8}")
+                lines.append("  " + "-" * 50)
             sub = summary[summary["strategy"] == strategy]
             for signal in ["BUY", "SELL"]:
                 for r in sub[sub["signal"] == signal].itertuples():
-                    lines.append(
-                        f"  {signal:<8} {r.horizon:>3}d {r.n:>4} {r.win_rate:>6.1f}% "
-                        f"{r.avg_pct:>+7.2f}% {r.median_pct:>+7.2f}%"
-                    )
+                    if has_base and pd.notna(r.base_win_rate):
+                        lines.append(
+                            f"  {signal:<8} {r.horizon:>3}d {r.n:>4} {r.win_rate:>6.1f}% "
+                            f"{r.base_win_rate:>6.1f}% {r.edge_win_rate:>+6.1f}pt"
+                            f" {r.avg_pct:>+7.2f}% {r.edge_avg_pct:>+8.2f}pt"
+                        )
+                    else:
+                        lines.append(
+                            f"  {signal:<8} {r.horizon:>3}d {r.n:>4} {r.win_rate:>6.1f}% "
+                            f"{r.avg_pct:>+7.2f}% {r.median_pct:>+7.2f}%"
+                        )
 
     # ロジック版別の実績 (シグナル改善が効いたかの効果測定)
     version_summary = summarize_by_version(onsets)

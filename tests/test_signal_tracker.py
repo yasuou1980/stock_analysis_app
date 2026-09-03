@@ -260,3 +260,62 @@ def test_write_report_contains_edge_columns(tmp_path):
 
     assert "ベース" in text
     assert "エッジ" in text
+
+
+# ---------------------------------------------------------------------------
+# 過去データバックフィル (統計的検証力を上げるための基盤, 2026-09)
+# ---------------------------------------------------------------------------
+def _synthetic_ohlcv(n=400, seed=3):
+    rng = np.random.default_rng(seed)
+    close = 100 * np.cumprod(1 + 0.0006 + rng.normal(0, 0.02, n))
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    return pd.DataFrame({
+        "open": close, "high": close * 1.015, "low": close * 0.985, "close": close,
+        "volume": np.where(np.arange(n) % 3 == 0, 2_000_000, 1_000_000),
+    }, index=idx)
+
+
+def test_backfill_rows_match_history_schema():
+    """バックフィル出力は signals_history.csv と同一スキーマ = 既存の集計関数がそのまま使える"""
+    import backfill_history
+
+    data = _synthetic_ohlcv()
+    rows = backfill_history.rows_for_ticker("TEST", data, "plain")
+    df = pd.DataFrame(rows)
+
+    assert set(signal_tracker.HISTORY_COLUMNS) <= set(df.columns)
+    assert set(df["strategy"]) == {"トレンドフォロー", "逆張り"}
+    assert set(df["signal"]) <= {"BUY", "SELL", "HOLD"}
+    assert set(df["raw_signal"]) <= {"BUY", "SELL", "HOLD"}
+    # 既存の集計パイプラインが通る
+    onsets = signal_tracker.compute_onset_performance(
+        df.reindex(columns=signal_tracker.HISTORY_COLUMNS))
+    assert not onsets.empty
+
+
+def test_backfill_drops_only_the_warmup_window():
+    """助走期間の除外は日付基準。位置スライスだと二重に切られて大量にデータを失う"""
+    import backfill_history
+
+    data = _synthetic_ohlcv()
+    rows = backfill_history.rows_for_ticker("TEST", data, "plain")
+    df = pd.DataFrame(rows)
+
+    expected_start = data.index[backfill_history.WARMUP_TRADING_DAYS].date().isoformat()
+    assert df["signal_date"].min() == expected_start
+    # ret_5d は切り出し前の系列で計算するので先頭も NaN にならない
+    assert df["ret_5d"].isna().sum() == 0
+
+
+def test_backfill_applies_ticker_class_gates():
+    """バックフィルも本番と同じゲートを通る (inverse は BUY が出ない)"""
+    import backfill_history
+
+    data = _synthetic_ohlcv()
+    plain = pd.DataFrame(backfill_history.rows_for_ticker("TEST", data, "plain"))
+    inverse = pd.DataFrame(backfill_history.rows_for_ticker("TEST", data, "inverse_lev"))
+
+    assert (plain["signal"] == "BUY").any(), "前提条件エラー: plain で BUY が出ない合成データ"
+    assert not (inverse["signal"] == "BUY").any()
+    # ゲートに止められた BUY は raw_signal に残る (シャドー計測)
+    assert (inverse["raw_signal"] == "BUY").any()

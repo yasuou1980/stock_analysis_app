@@ -176,3 +176,87 @@ def test_suppressed_performance_ignores_rows_without_raw_signal():
                           "signal": "SELL", "close": 100.0, "rsi": 40.0, "deviation": 0.0,
                           "raw_signal": np.nan}])
     assert signal_tracker.compute_suppressed_performance(hist).empty
+
+
+# ---------------------------------------------------------------------------
+# ベースレート超過 (エッジ) — 勝率だけでは「市場が上がっただけ」と区別できない
+# ---------------------------------------------------------------------------
+def test_compute_base_rates_splits_evenly():
+    """A は毎日上昇・B は毎日下落 → 全観測を混ぜると上昇率はちょうど50%"""
+    dates = pd.bdate_range("2026-01-01", periods=40)
+    rows = []
+    for i, d in enumerate(dates):
+        rows.append({"signal_date": d.strftime("%Y-%m-%d"), "ticker": "A", "close": 100.0 + i})
+        rows.append({"signal_date": d.strftime("%Y-%m-%d"), "ticker": "B", "close": 200.0 - i})
+    hist = pd.DataFrame(rows)
+
+    rates = signal_tracker.compute_base_rates(hist, (5,))
+
+    assert rates[5]["up_rate"] == 50.0
+    assert rates[5]["n"] > 0
+
+
+def test_summarize_edge_buy():
+    """BUY のエッジ = シグナルの勝率からベース上昇率を引いたもの"""
+    onsets = pd.DataFrame({
+        "strategy": ["トレンドフォロー"] * 3,
+        "signal": ["BUY"] * 3,
+        "fwd_5d": [0.05, -0.02, 0.03],
+    })
+    base_rates = {5: {"n": 50, "up_rate": 52.0, "avg_pct": 1.5}}
+
+    out = signal_tracker.summarize(onsets, horizons=(5,), base_rates=base_rates)
+    r = out.iloc[0]
+
+    assert r["base_win_rate"] == 52.0
+    assert r["edge_win_rate"] == r["win_rate"] - r["base_win_rate"]
+    assert r["edge_avg_pct"] == r["avg_pct"] - r["base_avg_pct"]
+
+
+def test_summarize_edge_sell_inverts_base():
+    """SELL は fwd が符号反転済みのため、ベース側も反転して比較する"""
+    onsets = pd.DataFrame({
+        "strategy": ["トレンドフォロー"] * 3,
+        "signal": ["SELL"] * 3,
+        "fwd_5d": [0.05, -0.02, 0.03],
+    })
+    base_rates = {5: {"n": 50, "up_rate": 52.0, "avg_pct": 1.5}}
+
+    out = signal_tracker.summarize(onsets, horizons=(5,), base_rates=base_rates)
+    r = out.iloc[0]
+
+    assert r["base_win_rate"] == 48.0     # 100 - up_rate
+    assert r["base_avg_pct"] == -1.5      # -avg_pct
+
+
+def test_summarize_without_base_rates_keeps_nan():
+    """base_rates 省略時 (None) は4列とも NaN で、既存列は従来通り"""
+    onsets = pd.DataFrame({
+        "strategy": ["トレンドフォロー"] * 3,
+        "signal": ["BUY"] * 3,
+        "fwd_5d": [0.05, -0.02, 0.03],
+    })
+
+    out = signal_tracker.summarize(onsets, horizons=(5,))
+    r = out.iloc[0]
+
+    assert np.isnan(r["base_win_rate"])
+    assert np.isnan(r["base_avg_pct"])
+    assert np.isnan(r["edge_win_rate"])
+    assert np.isnan(r["edge_avg_pct"])
+    assert r["win_rate"] == 100.0 * (2 / 3)
+    assert r["n"] == 3
+
+
+def test_write_report_contains_edge_columns(tmp_path):
+    rows = []
+    for i, d in enumerate(pd.bdate_range("2026-05-01", periods=45)):
+        sig = "BUY" if i == 0 else "HOLD"
+        rows.append(_batch_row(signal_date=str(d.date()), composite_signal=sig, close=100.0 + i))
+    signal_tracker.ingest(rows, tmp_path)
+
+    path = signal_tracker.write_report(tmp_path)
+    text = path.read_text()
+
+    assert "ベース" in text
+    assert "エッジ" in text

@@ -1,0 +1,46 @@
+name: Backfill Signal History
+
+# 手動実行のみ。日次バッチ (daily_run.yml) とは独立しており、
+# 本番履歴 results/signals_history.csv には一切触れない。
+# 出力は results/signals_history_backfill.csv (検証専用)。
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: '遡る年数 (既定 4)'
+        required: false
+        default: '4'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backfill
+        run: python backfill_history.py --years "${{ github.event.inputs.years || '4' }}"
+
+      - name: Commit backfill result
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 検証用ファイルのみ。signals_history.csv は意図的に対象外
+          git add results/signals_history_backfill.csv
+          git diff --staged --quiet || git commit -m "chore: backfill signal history (${{ github.event.inputs.years || '4' }}y)"
+          git push

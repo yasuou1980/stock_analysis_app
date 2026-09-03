@@ -105,13 +105,15 @@ def ensure_table(conn: sqlite3.Connection) -> None:
             adx           REAL,
             ret_5d        REAL,
             ticker_class  TEXT,
+            raw_signal    TEXT,
             UNIQUE(run_date, ticker, strategy)
         )
     """)
     # 既存 DB へのカラム追加 (無ければ足す)
     existing = {r[1] for r in conn.execute("PRAGMA table_info(signals)")}
     for col, coltype in [("score", "REAL"), ("adx", "REAL"),
-                         ("ret_5d", "REAL"), ("ticker_class", "TEXT")]:
+                         ("ret_5d", "REAL"), ("ticker_class", "TEXT"),
+                         ("raw_signal", "TEXT")]:
         if col not in existing:
             conn.execute(f"ALTER TABLE signals ADD COLUMN {col} {coltype}")
     conn.commit()
@@ -125,10 +127,10 @@ def save_to_db(db_path: Path, rows: list[dict]) -> None:
         conn.executemany("""
             INSERT OR REPLACE INTO signals
                 (run_date, ticker, signal_date, strategy, close, composite_signal, rsi, deviation,
-                 score, adx, ret_5d, ticker_class)
+                 score, adx, ret_5d, ticker_class, raw_signal)
             VALUES
                 (:run_date, :ticker, :signal_date, :strategy, :close, :composite_signal, :rsi, :deviation,
-                 :score, :adx, :ret_5d, :ticker_class)
+                 :score, :adx, :ret_5d, :ticker_class, :raw_signal)
         """, rows)
         conn.commit()
 
@@ -239,6 +241,9 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
                     "adx":              round(float(latest.get("ADX_14", np.nan)), 2),
                     "ret_5d":           round(float(ret_5d), 4) if pd.notna(ret_5d) else np.nan,
                     "ticker_class":     ticker_class,
+                    # シャドー計測: ゲート適用前の生シグナル。抑制されたシグナルの
+                    # その後の値動きを追跡し、ゲートの妥当性をフォワードで検証する
+                    "raw_signal":       str(latest.get("raw_signal", latest["composite_signal"])),
                 }
                 rows.append(row)
                 sig = row["composite_signal"]

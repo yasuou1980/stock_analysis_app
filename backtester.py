@@ -205,39 +205,40 @@ def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     - buy_ok: インバース型レバETFのBUY禁止
         (逆張りBUY 31件 勝率19% 平均-13.9% / トレンドBUY 2件 勝率0%。
          構造的減価がある商品の押し目買い・順張り買いはどちらも機能しない)
-    - trend_sell_ok: トレンドSELLはインバース型レバETFのみ許可
-        * インバース型は制限なし (減価継続の売り 20件 勝率55% 平均+4.9%、
-          20日勝率59% 平均+9.8%)
-        * ロング型レバETFは禁止 (16件 勝率19% 平均-13.7%。EMA50割れ確認後では
-          下げが出切っており、3倍の反発に轢かれる)
-        * plain 銘柄も禁止 (G6, 2026-09 追加: 43件・18銘柄 勝率36.6% 平均-1.75%。
-          上昇相場 46%・下落相場 15% と両局面で負け、RSI/乖離率/下落率の
-          どのバケットにも両期間で勝てる残存群が無い。構造崩れ確認後の売りは
-          遅すぎて 5〜20 日の反発に轢かれる。旧 G3 (急落直後の SELL 禁止) は
-          この規則に包含される)
+    - trend_sell_ok / counter_sell_ok: **SELL はインバース型レバETFのみ許可**
+        (G7, 2026-09: 4年1011営業日・1090 onset のバックフィル検証で統一)
+
+        ベースレート超過 (エッジ) で見た 10 日後の実測:
+
+        | 商品クラス | トレンドSELL | 逆張りSELL |
+        |---|---|---|
+        | inverse  | **+22.3pt** (140件/3銘柄) | **+18.2pt** (149件/3銘柄) |
+        | plain    | -0.9pt (503件/20銘柄) | -2.6pt (210件/20銘柄) |
+        | long_lev | -1.1pt (180件/7銘柄) | -4.7pt (223件/7銘柄) |
+
+        * インバース型: 日次リバランスによる構造的減価が唯一の再現性ある
+          ショート対象。2023〜2026 の4年連続でプラス (下落相場の 2022 のみ
+          マイナス = 逆行局面では素直に負ける、という説明のつく振る舞い)
+        * plain / long_lev: どの期間・どのバケットでも edge が正にならない。
+          「構造が壊れてから売る」設計は本質的に遅行し、5〜20日の反発に轢かれる
+
+        旧 G5 (逆張りSELL を RSI>=50 かつ 乖離率-3〜+15% に限定) は廃止した。
+        この帯は現物株の想定で作られており、減価で乖離が大きくマイナスに沈む
+        インバース型を構造的に締め出していた (該当 149 件のうち **131 件 (88%) を
+        誤って遮断**。止められた群のエッジは +17.0pt = 止めたのが誤り)。
+
         手仕舞いは ATR トレイリングストップ側が担当する
-    - counter_sell_ok: 逆張りSELLは「強さが残る状態からの反落」のみ許可
-        RSI>=50 かつ 乖離率 -3〜+15% かつ 5日リターン>-10%、ロング型レバETF除外
-        (適用後: 90件 勝率32.2% → 31件 勝率45.2%、20日勝率 35.7% → 53.6%)
     """
     n = len(data)
     true_arr = np.ones(n, dtype=bool)
     false_arr = np.zeros(n, dtype=bool)
 
-    ret5 = data['close'].pct_change(5).fillna(0.0).values
-    rsi = data['rsi'].fillna(50.0).values if 'rsi' in data.columns else np.full(n, 50.0)
-    dev = data['deviation'].fillna(0.0).values if 'deviation' in data.columns else np.zeros(n)
-
     is_inverse = ticker_class == TICKER_CLASS_INVERSE_LEV
-    is_long_lev = ticker_class == TICKER_CLASS_LONG_LEV
 
     buy_ok = false_arr if is_inverse else true_arr
+    # SELL は両戦略ともインバース型のみ (G7)。減価継続の売りだけが実測でエッジを持つ
     trend_sell_ok = true_arr if is_inverse else false_arr
-
-    if is_long_lev:
-        counter_sell_ok = false_arr
-    else:
-        counter_sell_ok = (rsi >= 50.0) & (dev >= -3.0) & (dev <= 15.0) & (ret5 > -0.10)
+    counter_sell_ok = true_arr if is_inverse else false_arr
 
     return {
         'buy_ok': buy_ok,

@@ -87,6 +87,48 @@ def compute_signals(raw_data: pd.DataFrame, params: dict, strategy: str) -> pd.D
 
 
 # ---------------------------------------------------------------------------
+# 行の組み立て
+# ---------------------------------------------------------------------------
+def build_signal_rows(data: pd.DataFrame, ticker: str, strategy: str, ticker_class: str,
+                      run_date: str, after: str | None = None) -> list[dict]:
+    """シグナル計算済みデータから履歴・DB 用の行を組み立てる。
+
+    after が None なら最新バー 1 本のみ。指定した場合は signal_date が
+    after (ISO 日付文字列) より新しいバーをすべて古い順に返す。
+    該当バーが無ければ空リスト。
+    """
+    score_col = "counter_score" if strategy == "逆張り" else "trend_score"
+    ret_5d_series = data["close"].pct_change(5)
+    positions = range(len(data) - 1, len(data))
+    if after is not None:
+        positions = [i for i in range(len(data)) if str(data.index[i].date()) > after]
+
+    out = []
+    for i in positions:
+        latest = data.iloc[i]
+        ret_5d = ret_5d_series.iloc[i]
+        out.append({
+            "run_date":         run_date,
+            "ticker":           ticker,
+            "signal_date":      str(data.index[i].date()),
+            "strategy":         strategy,
+            "close":            round(float(latest["close"]), 4),
+            "composite_signal": str(latest["composite_signal"]),
+            "rsi":              round(float(latest.get("rsi", np.nan)), 2),
+            "deviation":        round(float(latest.get("deviation", np.nan)), 4),
+            # 検証用特徴量 (シグナル精度のバケット分析に使う)
+            "score":            round(float(latest.get(score_col, np.nan)), 3),
+            "adx":              round(float(latest.get("ADX_14", np.nan)), 2),
+            "ret_5d":           round(float(ret_5d), 4) if pd.notna(ret_5d) else np.nan,
+            "ticker_class":     ticker_class,
+            # シャドー計測: ゲート適用前の生シグナル。抑制されたシグナルの
+            # その後の値動きを追跡し、ゲートの妥当性をフォワードで検証する
+            "raw_signal":       str(latest.get("raw_signal", latest["composite_signal"])),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # DB 保存
 # ---------------------------------------------------------------------------
 def ensure_table(conn: sqlite3.Connection) -> None:
@@ -206,8 +248,10 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
     strategies = ["トレンドフォロー", "逆張り"]
 
     logger.info(f"=== バッチ開始: {run_date} | {len(tickers)} 銘柄 ===")
-    rows: list[dict] = []
+    rows: list[dict] = []          # 最新バーのみ (DB・テキスト用)
+    history_rows: list[dict] = []  # 履歴 CSV 用 (記録済みより新しい全バー)
     errors: list[str] = []
+    last_dates = signal_tracker.last_signal_dates(results_dir)
 
     for ticker in tickers:
         raw_data = load_data(ticker, start_date.isoformat(), end_date.isoformat())
@@ -224,28 +268,17 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
                 data = compute_signals(raw_data, ticker_params, strategy)
                 if data.empty:
                     continue
-                latest = data.iloc[-1]
-                score_col = "counter_score" if strategy == "逆張り" else "trend_score"
-                ret_5d = data["close"].pct_change(5).iloc[-1] if len(data) > 5 else np.nan
-                row = {
-                    "run_date":         run_date,
-                    "ticker":           ticker,
-                    "signal_date":      str(data.index[-1].date()),
-                    "strategy":         strategy,
-                    "close":            round(float(latest["close"]), 4),
-                    "composite_signal": str(latest["composite_signal"]),
-                    "rsi":              round(float(latest.get("rsi", np.nan)), 2),
-                    "deviation":        round(float(latest.get("deviation", np.nan)), 4),
-                    # 検証用特徴量 (シグナル精度のバケット分析に使う)
-                    "score":            round(float(latest.get(score_col, np.nan)), 3),
-                    "adx":              round(float(latest.get("ADX_14", np.nan)), 2),
-                    "ret_5d":           round(float(ret_5d), 4) if pd.notna(ret_5d) else np.nan,
-                    "ticker_class":     ticker_class,
-                    # シャドー計測: ゲート適用前の生シグナル。抑制されたシグナルの
-                    # その後の値動きを追跡し、ゲートの妥当性をフォワードで検証する
-                    "raw_signal":       str(latest.get("raw_signal", latest["composite_signal"])),
-                }
+                row = build_signal_rows(data, ticker, strategy, ticker_class, run_date)[0]
                 rows.append(row)
+                # 履歴用: 記録済みの最終 signal_date より新しいバーをすべて追加する
+                # (銘柄ごとに Yahoo の更新タイミングが違い、最新バーだけだと日が欠落するため)。
+                # 記録が無い銘柄・戦略は従来どおり最新バー 1 本のみ
+                last = last_dates.get((ticker, strategy))
+                if last is None:
+                    history_rows.append(row)
+                else:
+                    history_rows.extend(build_signal_rows(
+                        data, ticker, strategy, ticker_class, run_date, after=last))
                 sig = row["composite_signal"]
                 logger.info(f"  {ticker:6s} [{strategy}] {sig}")
             except Exception as e:
@@ -266,7 +299,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
     # 失敗してもバッチ本体は成功扱いにする
     if not dry_run:
         try:
-            signal_tracker.update(rows, results_dir)
+            signal_tracker.update(history_rows, results_dir)
         except Exception as e:
             logger.error(f"実績トラッキング更新エラー: {e}", exc_info=True)
 

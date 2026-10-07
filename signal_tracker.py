@@ -77,6 +77,15 @@ def save_history(df: pd.DataFrame, results_dir: Path = RESULTS_DIR_DEFAULT) -> N
     df.to_csv(results_dir / HISTORY_NAME, index=False)
 
 
+def last_signal_dates(results_dir: Path = RESULTS_DIR_DEFAULT) -> dict[tuple[str, str], str]:
+    """履歴に記録済みの (ticker, strategy) ごとの最終 signal_date (ISO 文字列)。"""
+    hist = load_history(results_dir)
+    if hist.empty:
+        return {}
+    last = hist.groupby(["ticker", "strategy"])["signal_date"].max()
+    return {k: str(v) for k, v in last.items()}
+
+
 def ingest(rows: list[dict], results_dir: Path = RESULTS_DIR_DEFAULT) -> int:
     """batch_runner が計算した当日分のシグナルを履歴に追記する。
 

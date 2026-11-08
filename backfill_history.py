@@ -63,7 +63,7 @@ BACKFILL_NAME = "signals_history_backfill.csv"
 # この期間のシグナルは信頼できないため出力から除外する。
 WARMUP_TRADING_DAYS = 250
 
-STRATEGIES = ["トレンドフォロー", "逆張り"]
+STRATEGIES = ["トレンドフォロー", "逆張り", "押し目候補"]
 
 # batch_runner.run() と同一のデフォルトパラメータ (本番と同じ挙動を再現する)
 PARAMS = {
@@ -109,7 +109,7 @@ def rows_for_ticker(ticker: str, data: pd.DataFrame, ticker_class: str) -> list[
             continue
 
         # ret_5d は切り出し前の系列で計算する (切り出し後だと先頭5本が NaN になる)
-        score_col = "counter_score" if strategy == "逆張り" else "trend_score"
+        score_col = {"逆張り": "counter_score", "押し目候補": "pullback_score"}.get(strategy, "trend_score")
         ret5 = sig["close"].pct_change(5)
 
         # 助走期間の除外は日付で行う。calculate_indicators_and_signals が

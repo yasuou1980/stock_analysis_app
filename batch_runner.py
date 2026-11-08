@@ -42,6 +42,9 @@ import signal_tracker  # noqa: E402
 # 定数
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent
+
+# 計算・記録する戦略。「押し目候補」は BUY 候補専用 (SELL なし)
+STRATEGIES = ["トレンドフォロー", "逆張り", "押し目候補"]
 RESULTS_DIR_DEFAULT = SCRIPT_DIR / "results"
 
 # ---------------------------------------------------------------------------
@@ -97,7 +100,7 @@ def build_signal_rows(data: pd.DataFrame, ticker: str, strategy: str, ticker_cla
     after (ISO 日付文字列) より新しいバーをすべて古い順に返す。
     該当バーが無ければ空リスト。
     """
-    score_col = "counter_score" if strategy == "逆張り" else "trend_score"
+    score_col = {"逆張り": "counter_score", "押し目候補": "pullback_score"}.get(strategy, "trend_score")
     ret_5d_series = data["close"].pct_change(5)
     positions = range(len(data) - 1, len(data))
     if after is not None:
@@ -192,7 +195,7 @@ def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: lis
     lines.append(f"  株式シグナルレポート  {run_date}")
     lines.append(f"{'=' * 60}")
 
-    for strategy in ["トレンドフォロー", "逆張り"]:
+    for strategy in STRATEGIES:
         sub = df[df["strategy"] == strategy].copy()
         lines.append(f"\n【{strategy}】")
         lines.append(f"  {'銘柄':<8} {'シグナル':<10} {'終値':>10}  {'RSI':>6}  {'乖離率':>8}")
@@ -245,7 +248,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
         "stoch_upper": 80, "stoch_lower": 20,
         "score_smooth_period": 3, "ema_slope_period": 5,
     }
-    strategies = ["トレンドフォロー", "逆張り"]
+    strategies = STRATEGIES
 
     logger.info(f"=== バッチ開始: {run_date} | {len(tickers)} 銘柄 ===")
     rows: list[dict] = []          # 最新バーのみ (DB・テキスト用)

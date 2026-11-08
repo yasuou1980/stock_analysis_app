@@ -198,6 +198,10 @@ def resolve_ticker_class(ticker, config):
     return TICKER_CLASS_PLAIN
 
 
+# 押し目候補の RSI しきい値 (「押し目候補」戦略。根拠は strategy_type == "押し目候補" の分岐参照)
+PULLBACK_RSI_MAX = 35
+
+
 def compute_signal_gates(data, ticker_class=TICKER_CLASS_PLAIN):
     """新規シグナル発火の可否ゲートを計算する (bool 配列の dict を返す)。
 
@@ -631,6 +635,22 @@ def calculate_indicators_and_signals(data_hash, _data, params, strategy_type="�
             data['raw_signal'] = np.where(buy_raw_c, "BUY", np.where(sell_raw_c, "SELL", "HOLD"))
             data['composite_signal'] = np.where(buy_signal_c, "BUY",
                                        np.where(sell_final_c, "SELL", "HOLD"))
+
+        elif strategy_type == "押し目候補":
+            # 上昇トレンド (終値 > 200日単純平均) の中で RSI が売られ過ぎまで押した日。
+            # スイング用の BUY 候補専用チャンネルで、SELL は出さない (手仕舞いの優位性は
+            # 検証で確認できなかった: docs/signal_accuracy_2026-07.md 2026-11-08)。
+            # 4年バックフィル 10日エッジ (銘柄補正済み): +1.25pt (年別 +1.3/+1.2/+1.0/+1.7,
+            # IS≤2024 +1.22 / OOS2025〜 +1.28)、週あたり約2件。
+            # 隣接しきい値 RSI<40 は +0.68pt (2025年マイナス)、RSI<45 は -0.25pt と、
+            # 押しが深いほど良い単調な傾きがあり、<35 の優位性が偶然のしきい値でないことを支持する
+            data['sma200'] = data['close'].rolling(window=200).mean()
+            pullback_rsi = params.get('pullback_rsi', PULLBACK_RSI_MAX)
+            pull_raw = ((data['close'] > data['sma200']) & (data['rsi'] < pullback_rsi)).to_numpy()
+            data['raw_signal'] = np.where(pull_raw, "BUY", "HOLD")
+            data['composite_signal'] = np.where(pull_raw & gates['buy_ok'], "BUY", "HOLD")
+            # 押しの深さ (大きいほど深い)。履歴 CSV の score 列に記録する
+            data['pullback_score'] = pullback_rsi - data['rsi']
 
         elif strategy_type == "レジーム切替":
             adx_threshold = params.get('adx_threshold', 20)

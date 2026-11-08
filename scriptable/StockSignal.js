@@ -537,6 +537,7 @@ async function analyzeTicker(ticker) {
   const gates = computeSignalGates(resolveTickerClass(ticker), ind, i);
   const trend = computeTrendStrategy(ind, PARAMS, gates);
   const counter = computeCounterStrategy(ind, PARAMS, gates);
+  const pullback = computePullbackStrategy(ind, gates, i);
   return {
     ticker,
     date: bars.dates[i],
@@ -545,7 +546,21 @@ async function analyzeTicker(ticker) {
     deviation: ind.deviation[i],
     trend,
     counter,
+    pullback,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 押し目候補 (backtester.py の「押し目候補」相当。BUY 候補専用で SELL は出さない)
+// 上昇トレンド (終値 > 200日単純平均) の中で RSI < 35 まで押した日。
+// 4年バックフィルの10日エッジ(銘柄補正済み) +1.25pt、週あたり約2件。
+// ---------------------------------------------------------------------------
+const PULLBACK_RSI_MAX = 35;
+
+function computePullbackStrategy(ind, gates, i) {
+  const sma200 = rollingMean(ind.close, 200)[i];
+  const raw = ind.close[i] > sma200 && ind.rsi[i] < PULLBACK_RSI_MAX;
+  return { signal: raw && gates.buyOk ? "BUY" : "HOLD", score: PULLBACK_RSI_MAX - ind.rsi[i] };
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +581,7 @@ function buildResultTable(r) {
   info.addText("RSI / 乖離率", `${r.rsi.toFixed(1)} / ${r.deviation >= 0 ? "+" : ""}${r.deviation.toFixed(2)}%`);
   table.addRow(info);
 
-  for (const [label, res] of [["トレンドフォロー", r.trend], ["逆張り", r.counter]]) {
+  for (const [label, res] of [["トレンドフォロー", r.trend], ["逆張り", r.counter], ["押し目候補", r.pullback]]) {
     const row = new UITableRow();
     row.height = 60;
     const cell = row.addText(label, `${SIGNAL_EMOJI[res.signal]}  (score: ${res.score.toFixed(1)})`);
@@ -630,7 +645,7 @@ async function runWidget() {
     title.font = Font.boldSystemFont(16);
     widget.addSpacer(6);
 
-    for (const [label, res] of [["トレンド", r.trend], ["逆張り", r.counter]]) {
+    for (const [label, res] of [["トレンド", r.trend], ["逆張り", r.counter], ["押し目", r.pullback]]) {
       const row = widget.addStack();
       const l = row.addText(`${label}: `);
       l.textColor = Color.lightGray();

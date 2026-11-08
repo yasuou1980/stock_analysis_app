@@ -284,7 +284,7 @@ def test_backfill_rows_match_history_schema():
     df = pd.DataFrame(rows)
 
     assert set(signal_tracker.HISTORY_COLUMNS) <= set(df.columns)
-    assert set(df["strategy"]) == {"トレンドフォロー", "逆張り"}
+    assert set(df["strategy"]) == {"トレンドフォロー", "逆張り", "押し目候補"}
     assert set(df["signal"]) <= {"BUY", "SELL", "HOLD"}
     assert set(df["raw_signal"]) <= {"BUY", "SELL", "HOLD"}
     # 既存の集計パイプラインが通る

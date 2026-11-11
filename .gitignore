@@ -6,9 +6,13 @@ __pycache__/
 
 # 仮想環境
 venv/
+.venv/
 
 # バッチ結果: SQLite と詳細ログは除外、テキストレポートは追跡する
 results/signals.db
 results/batch.log
 results/launchd_stdout.log
 results/launchd_stderr.log
+
+# 保有ポジション (個人の売買記録。公開リポジトリに載せない)
+positions.csv

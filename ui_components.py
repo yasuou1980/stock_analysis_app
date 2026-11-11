@@ -15,7 +15,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     if 'preset_choice' not in st.session_state:
         st.session_state.preset_choice = "スイングトレード"
     if 'strategy_type' not in st.session_state:
-        st.session_state.strategy_type = "逆張り"
+        st.session_state.strategy_type = "押し目候補"
 
     # --- UI Components ---
     ticker_choice = st.sidebar.selectbox("ティッカー", TICKERS, index=TICKERS.index(st.session_state.ticker) if st.session_state.ticker in TICKERS else 0)
@@ -26,7 +26,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.session_state.ticker = ticker_choice
         st.rerun()
 
-    _strategy_options = ["逆張り", "トレンドフォロー", "レジーム切替"]
+    _strategy_options = ["押し目候補", "トレンドフォロー", "逆張り", "レジーム切替"]
     _strategy_idx = _strategy_options.index(st.session_state.strategy_type) if st.session_state.strategy_type in _strategy_options else 0
     strategy_type = st.sidebar.selectbox("戦略タイプ", _strategy_options, index=_strategy_idx)
     if strategy_type != st.session_state.strategy_type:
@@ -76,6 +76,10 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     elif strategy_type == "逆張り":
         visible_params = [p for p in visible_params if 'macd' not in p and 'window' not in p and p != 'adx_threshold'
                           and p != 'score_smooth_period' and p != 'ema_slope_period']
+    elif strategy_type == "押し目候補":
+        # 押し目候補が使うのは RSI 期間だけ (200日線の上 & RSI が売られ過ぎ)。
+        # 残りはチャート表示用の指標にしか効かない
+        visible_params = ['rsi_period']
     # レジーム切替: 全パラメータを表示
 
     # セッションステートのパラメータを直接更新

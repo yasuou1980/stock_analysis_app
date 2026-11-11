@@ -37,6 +37,7 @@ sys.modules["streamlit"] = _mock_st
 
 from backtester import calculate_indicators_and_signals, resolve_ticker_class  # noqa: E402
 import signal_tracker  # noqa: E402
+import swing  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 定数
@@ -183,8 +184,12 @@ def save_to_db(db_path: Path, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 # テキスト書き出し
 # ---------------------------------------------------------------------------
-def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: list[str]) -> None:
-    """日付ごとのテキストファイルに結果を書き出す"""
+def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: list[str],
+                 extra_lines: list[str] | None = None) -> None:
+    """日付ごとのテキストファイルに結果を書き出す。
+
+    extra_lines はシグナル一覧の後ろに追記する行 (スイング候補の売買プラン)。
+    """
     text_path = results_dir / f"signals_{run_date}.txt"
     df = pd.DataFrame(rows)
 
@@ -209,6 +214,9 @@ def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: lis
                 lines.append(
                     f"  {r['ticker']:<8} {label:<10} {r['close']:>10.2f}  {r['rsi']:>6.1f}  {dev:>8}"
                 )
+
+    if extra_lines:
+        lines.extend(extra_lines)
 
     if errors:
         lines.append(f"\n⚠️  取得失敗: {', '.join(errors)}")
@@ -238,17 +246,12 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
     start_date = end_date - timedelta(days=lookback_days)
     run_date = end_date.isoformat()
 
-    # デフォルト分析パラメータ (スイングトレード設定)
-    params = {
-        "short_window": 10, "long_window": 40, "rsi_period": 10,
-        "macd_fast": 10, "macd_slow": 20, "macd_signal": 7,
-        "bb_length": 20, "bb_std": 2.0, "stoch_k": 14, "stoch_d": 3,
-        "dev_upper": 10, "dev_lower": -10,
-        "rsi_upper": 70, "rsi_lower": 30,
-        "stoch_upper": 80, "stoch_lower": 20,
-        "score_smooth_period": 3, "ema_slope_period": 5,
-    }
+    # デフォルト分析パラメータ (スイングトレード設定。アプリの候補一覧と共通)
+    params = dict(swing.SIGNAL_PARAMS)
     strategies = STRATEGIES
+    swing_cfg = swing.swing_settings(config)
+    frames: dict = {}              # (ticker, strategy) → シグナル計算済みデータ (スイング候補用)
+    ticker_classes: dict = {}
 
     logger.info(f"=== バッチ開始: {run_date} | {len(tickers)} 銘柄 ===")
     rows: list[dict] = []          # 最新バーのみ (DB・テキスト用)
@@ -264,6 +267,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
             continue
 
         ticker_class = resolve_ticker_class(ticker, config)
+        ticker_classes[ticker] = ticker_class
         ticker_params = {**params, "ticker_class": ticker_class}
 
         for strategy in strategies:
@@ -271,6 +275,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
                 data = compute_signals(raw_data, ticker_params, strategy)
                 if data.empty:
                     continue
+                frames[(ticker, strategy)] = data
                 row = build_signal_rows(data, ticker, strategy, ticker_class, run_date)[0]
                 rows.append(row)
                 # 履歴用: 記録済みの最終 signal_date より新しいバーをすべて追加する
@@ -288,15 +293,25 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
                 logger.error(f"  {ticker} / {strategy} 計算エラー: {e}", exc_info=True)
                 errors.append(f"{ticker}/{strategy}")
 
+    # スイング候補 (最新バーが BUY の銘柄) を売買プラン付きでレポートに追記する。
+    # 失敗してもシグナル一覧の保存は続ける
+    try:
+        plan_lines = swing.format_candidates_text(
+            swing.scan_candidates(frames, ticker_classes, swing_cfg), swing_cfg)
+    except Exception as e:
+        logger.error(f"スイング候補の作成エラー: {e}", exc_info=True)
+        plan_lines = []
+
     if dry_run:
         logger.info("--- dry-run: DB・テキスト保存をスキップ ---")
         print(pd.DataFrame(rows).to_string(index=False))
+        print("\n".join(plan_lines))
     elif no_db:
-        save_to_text(results_dir, run_date, rows, errors)
+        save_to_text(results_dir, run_date, rows, errors, plan_lines)
     else:
         save_to_db(db_path, rows)
         logger.info(f"DB 保存完了: {len(rows)} 件 → {db_path}")
-        save_to_text(results_dir, run_date, rows, errors)
+        save_to_text(results_dir, run_date, rows, errors, plan_lines)
 
     # シグナル実績トラッキング (履歴 CSV 追記 + 精度レポート再生成)
     # 失敗してもバッチ本体は成功扱いにする

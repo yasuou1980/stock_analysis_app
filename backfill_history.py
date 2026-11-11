@@ -53,6 +53,7 @@ sys.modules["streamlit"] = _mock_st
 
 from backtester import calculate_indicators_and_signals, resolve_ticker_class  # noqa: E402
 import signal_tracker  # noqa: E402
+import swing  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,7 @@ WARMUP_TRADING_DAYS = 250
 STRATEGIES = ["トレンドフォロー", "逆張り", "押し目候補"]
 
 # batch_runner.run() と同一のデフォルトパラメータ (本番と同じ挙動を再現する)
-PARAMS = {
-    "short_window": 10, "long_window": 40, "rsi_period": 10,
-    "macd_fast": 10, "macd_slow": 20, "macd_signal": 7,
-    "bb_length": 20, "bb_std": 2.0, "stoch_k": 14, "stoch_d": 3,
-    "dev_upper": 10, "dev_lower": -10,
-    "rsi_upper": 70, "rsi_lower": 30,
-    "stoch_upper": 80, "stoch_lower": 20,
-    "score_smooth_period": 3, "ema_slope_period": 5,
-}
+PARAMS = dict(swing.SIGNAL_PARAMS)
 
 
 def fetch(ticker: str, start: str, end: str) -> pd.DataFrame | None:

@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import logging
 import hashlib
-from datetime import datetime, timedelta
-from utils import load_config, validate_date_range, validate_data_quality, safe_calculate_signal_strength
+from utils import load_config, validate_date_range, validate_data_quality
 from data_loader import load_data
 from ui_components import setup_sidebar
 from backtester import calculate_indicators_and_signals, backtest_strategy, calculate_performance_metrics, calculate_trade_metrics, resolve_ticker_class
 from plotting import plot_performance
+import swing_ui
 
 # --- Page and Logging Configuration ---
 st.set_page_config(
@@ -64,88 +64,27 @@ def main():
     # 商品クラス (config.toml [ticker_classes]) をシグナル計算に渡す
     params = {**params, 'ticker_class': resolve_ticker_class(ticker, config)}
 
-    # --- 全ティッカーのサマリー表示機能 ---
-    st.header("📈 全ティッカーの市場状況サマリー")
-    
-    summary_data_trend = []
-    summary_data_counter = []
-    
-    with st.spinner("全ティッカーの最新データを取得・分析中です..."):
-        default_params = PRESETS["スイングトレード"]
-        
-        end_date_summary = datetime.now().date()
-        start_date_summary = end_date_summary - timedelta(days=365)
+    # --- スイングトレード用の画面 (候補 / 保有) と、従来の個別分析をタブで分ける ---
+    swing_settings = swing_ui.settings_inputs(config)
+    prices, frames, failed = swing_ui.load_universe(swing_ui.universe(config), config)
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for i, ticker_item in enumerate(TICKERS):
-            status_text.text(f"分析中: {ticker_item} ({i+1}/{len(TICKERS)})...")
-            raw_data = load_data(ticker_item, start_date_summary.isoformat(), end_date_summary.isoformat())
-
-            # 1銘柄の計算エラーでページ全体が落ちないよう、銘柄ごとに隔離する
-            try:
-                if raw_data is not None and not raw_data.empty:
-                    item_params = {**default_params, 'ticker_class': resolve_ticker_class(ticker_item, config)}
-                    # トレンドフォロー戦略の計算
-                    trend_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "トレンドフォロー").encode()).hexdigest()
-                    data_trend = calculate_indicators_and_signals(trend_hash, raw_data.copy(), item_params, "トレンドフォロー")
-                    if not data_trend.empty:
-                        latest = data_trend.iloc[-1]
-                        summary_data_trend.append({
-                            'ティッカー': ticker_item,
-                            '現在価格': latest['close'],
-                            '総合シグナル': latest['composite_signal'],
-                            'RSI': latest['rsi'],
-                            'シグナル強度': int(safe_calculate_signal_strength(latest))
-                        })
-
-                    # 逆張り戦略の計算
-                    counter_hash = hashlib.sha256((str(raw_data.values.tobytes()) + str(item_params) + "逆張り").encode()).hexdigest()
-                    data_counter = calculate_indicators_and_signals(counter_hash, raw_data.copy(), item_params, "逆張り")
-                    if not data_counter.empty:
-                        latest = data_counter.iloc[-1]
-                        summary_data_counter.append({
-                            'ティッカー': ticker_item,
-                            '現在価格': latest['close'],
-                            '総合シグナル': latest['composite_signal'],
-                            'RSI': latest['rsi'],
-                            '乖離率(%)': latest.get('deviation', 0)
-                        })
-            except Exception as e:
-                logging.error(f"サマリー計算に失敗しました ({ticker_item}): {e}")
-            progress_bar.progress((i + 1) / len(TICKERS))
-
-        status_text.text(f"全{len(TICKERS)}ティッカーの分析が完了しました。")
-
-    st.subheader("トレンドフォロー戦略")
-    if summary_data_trend:
-        st.dataframe(
-            pd.DataFrame(summary_data_trend),
-            column_config={
-                "現在価格": st.column_config.NumberColumn(format="$%.2f"),
-                "RSI": st.column_config.NumberColumn(format="%.1f"),
-                "シグナル強度": st.column_config.ProgressColumn(help="シグナルの強さを0-100で表示します。",format="%d",min_value=0,max_value=100)
-            }, hide_index=True, use_container_width=True
-        )
-    else:
-        st.warning("トレンドフォロー戦略のサマリーデータを取得できませんでした。")
-
-    st.subheader("逆張り戦略")
-    if summary_data_counter:
-        st.dataframe(
-            pd.DataFrame(summary_data_counter),
-            column_config={
-                "現在価格": st.column_config.NumberColumn(format="$%.2f"),
-                "RSI": st.column_config.NumberColumn(format="%.1f"),
-                "乖離率(%)": st.column_config.NumberColumn(format="%.2f%%")
-            }, hide_index=True, use_container_width=True
-        )
-    else:
-        st.warning("逆張り戦略のサマリーデータを取得できませんでした。")
+    tab_candidates, tab_positions, tab_detail = st.tabs(
+        ["🎯 今日のスイング候補", "💼 保有ポジション", "🔬 個別分析・バックテスト"])
+    with tab_candidates:
+        swing_ui.render_candidates(config, swing_settings, prices, frames, failed)
+    with tab_positions:
+        swing_ui.render_positions(config, swing_settings, prices)
+    with tab_detail:
+        render_detail(config, swing_settings, ticker, start_date, end_date, params, initial_capital, commission_rate,
+                      slippage, position_sizing_strategy, ps_params, strategy_type, run_optimization_clicked)
 
     st.markdown("---")
-    
+    st.markdown("このツールは教育および情報提供目的のものです。投資判断はご自身の責任で行ってください。")
+
+
+def render_detail(config, swing_settings, ticker, start_date, end_date, params, initial_capital, commission_rate,
+                  slippage, position_sizing_strategy, ps_params, strategy_type, run_optimization_clicked):
+    """1 銘柄の詳細分析 (チャート・バックテスト・最適化)。最後のタブなので st.stop() で打ち切ってよい。"""
     # --- 個別ティッカーの詳細分析 ---
     if run_optimization_clicked:
         from optimizer_ui import run_optimization
@@ -185,6 +124,11 @@ def main():
 
     if metrics:
         plot_performance(data, metrics, results, params)
+        st.caption(
+            "このバックテストは、シグナル当日の終値で約定し、利確・トレイリングなど独自の手仕舞いルールで運用した場合です。"
+            "トレンドフォロー / 逆張りでは表示期間そのものでパラメータを自動調整しているため、成績は実力より良く見えます。"
+            "スイング候補タブの売買プランどおりに売買した場合の成績は、このページの一番下にあります。"
+        )
 
     if results and 'trades' in results and results['trades']:
         trades_df = pd.DataFrame(results['trades'])
@@ -247,7 +191,8 @@ def main():
             st.dataframe(trades_df)
 
     st.markdown("---")
-    st.markdown("🏆 **完成版**: このツールは教育および情報提供目的のものです。投資判断はご自身の責任で行ってください。")
+    swing_ui.render_plan_check(raw_data, data, swing_settings, ticker, strategy_type)
+
 
 if __name__ == "__main__":
     main()

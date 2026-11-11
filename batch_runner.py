@@ -198,6 +198,8 @@ def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: lis
     for strategy in STRATEGIES:
         sub = df[df["strategy"] == strategy].copy()
         lines.append(f"\n【{strategy}】")
+        if strategy == "押し目候補":
+            lines.append("  ※参考・未検証: 設計後の未知期間で不利な結果。売買の判断には使わない (docs 2026-11-11)")
         lines.append(f"  {'銘柄':<8} {'シグナル':<10} {'終値':>10}  {'RSI':>6}  {'乖離率':>8}")
         lines.append(f"  {'-' * 50}")
 

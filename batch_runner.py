@@ -9,6 +9,7 @@ Streamlit に依存しない独立スクリプトとして動作する。
     python batch_runner.py --dry-run    # DB 保存せず標準出力のみ
 """
 import sys
+import os
 import argparse
 import logging
 import sqlite3
@@ -233,7 +234,7 @@ def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: lis
 # ---------------------------------------------------------------------------
 # メイン処理
 # ---------------------------------------------------------------------------
-def run(dry_run: bool = False, no_db: bool = False) -> None:
+def run(dry_run: bool = False, no_db: bool = False, signals_json: Path | None = None) -> None:
     config = toml.load(SCRIPT_DIR / "config.toml")
     batch_cfg = config.get("batch", {})
 
@@ -324,6 +325,16 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
         except Exception as e:
             logger.error(f"実績トラッキング更新エラー: {e}", exc_info=True)
 
+    if signals_json is not None and not dry_run:
+        from signal_export import write_snapshot
+
+        try:
+            write_snapshot(signals_json, rows, tickers, strategies, errors)
+        except Exception as e:
+            logger.error(f"Sites 用 JSON 出力失敗（前回のファイルを維持）: {e}")
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print("::warning title=Sites signal snapshot::New snapshot unavailable; previous snapshot retained")
+
     logger.info(f"=== バッチ完了: 成功 {len(rows)} 件 / エラー {len(errors)} 件 ===")
     if errors:
         logger.warning(f"エラー銘柄: {errors}")
@@ -336,5 +347,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="株式シグナルバッチ実行")
     parser.add_argument("--dry-run", action="store_true", help="DB・テキスト保存せず結果を標準出力のみ")
     parser.add_argument("--no-db",   action="store_true", help="DB 保存をスキップしてテキストのみ保存 (CI 環境向け)")
+    parser.add_argument("--signals-json", type=Path, help="Sites 用の公開シグナル JSON の出力先")
     args = parser.parse_args()
-    run(dry_run=args.dry_run, no_db=args.no_db)
+    run(dry_run=args.dry_run, no_db=args.no_db, signals_json=args.signals_json)

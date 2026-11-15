@@ -29,13 +29,14 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run batch analysis
-        run: python batch_runner.py --no-db
+        run: python batch_runner.py --no-db --signals-json data/signals/latest.json
 
       - name: Commit results
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add results/signals_*.txt results/signals_history.csv results/performance_report.txt
+          if test -f data/signals/latest.json; then git add data/signals/latest.json; fi
           # 差分がある場合のみ commit（重複実行を防ぐ）
           git diff --staged --quiet || git commit -m "chore: daily signals $(date -u +%Y-%m-%d)"
           git push

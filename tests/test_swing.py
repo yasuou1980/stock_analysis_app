@@ -83,21 +83,33 @@ def test_scan_lists_only_latest_buys_with_new_onsets_first():
         ("DDD", "押し目候補"): signal_frame(["BUY", "BUY", "HOLD"]),   # 最新が HOLD → 対象外
         ("EEE", "逆張り"): signal_frame(["HOLD", "HOLD", "SELL"]),
     }
+    frames[("FFF", "逆張り")] = signal_frame(["HOLD", "HOLD", "BUY"])
     got = swing.scan_candidates(frames, {"AAA": "long_lev"}, SETTINGS)
+    # 押し目候補は参考・未検証のため売買プランの対象外 (2026-11-11 決定)
     assert [(c["strategy"], c["ticker"], c["streak"]) for c in got] == [
-        ("押し目候補", "CCC", 1), ("押し目候補", "BBB", 2), ("トレンドフォロー", "AAA", 1)]
+        ("トレンドフォロー", "AAA", 1), ("逆張り", "FFF", 1)]
     first = got[0]
     assert first["stop"] == pytest.approx(96.0) and first["shares"] == 25
-    assert got[2]["ticker_class"] == "long_lev" and first["ticker_class"] == "plain"
+    assert first["ticker_class"] == "long_lev" and got[1]["ticker_class"] == "plain"
     # シグナル日 2026-01-07 (水) の 10 営業日後 = 01-21
     assert str(first["signal_date"]) == "2026-01-07" and str(first["exit_date"]) == "2026-01-21"
+
+    # 押し目候補は参考シグナルとして、プランなしで別に列挙される
+    refs = swing.reference_signals(frames)
+    assert [(r["ticker"], r["streak"]) for r in refs] == [("CCC", 1), ("BBB", 2)]
+    assert all("stop" not in r and "shares" not in r for r in refs)
 
 
 def test_report_lines_do_not_collide_with_history_parser():
     """日次レポートに追記する行が、履歴再構築 (backfill_from_text) にシグナル行として拾われないこと"""
-    frames = {("AAA", "押し目候補"): signal_frame(["HOLD", "BUY"])}
-    lines = swing.format_candidates_text(swing.scan_candidates(frames, {}, SETTINGS), SETTINGS)
+    frames = {("AAA", "トレンドフォロー"): signal_frame(["HOLD", "BUY"]),
+              ("BBB", "押し目候補"): signal_frame(["HOLD", "BUY"])}
+    lines = (swing.format_candidates_text(swing.scan_candidates(frames, {}, SETTINGS), SETTINGS)
+             + swing.format_reference_text(swing.reference_signals(frames)))
     assert any("AAA" in line for line in lines)
+    ref_line = next(line for line in lines if "BBB" in line)
+    assert "押し目候補" in ref_line and "新規" in ref_line
+    assert any("参考・未検証" in line for line in lines)
     for line in lines:
         assert not signal_tracker._TXT_LINE_RE.match(line)
         assert not line.strip().startswith("【")

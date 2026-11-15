@@ -300,6 +300,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
     try:
         plan_lines = swing.format_candidates_text(
             swing.scan_candidates(frames, ticker_classes, swing_cfg), swing_cfg)
+        plan_lines += swing.format_reference_text(swing.reference_signals(frames))
     except Exception as e:
         logger.error(f"スイング候補の作成エラー: {e}", exc_info=True)
         plan_lines = []

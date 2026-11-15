@@ -39,9 +39,12 @@ def plot_performance(data, metrics, results, params):
     with tab3:
         fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.6, 0.2, 0.2])
         fig.add_trace(go.Candlestick(x=data.index, open=data['open'], high=data['high'], low=data['low'], close=data['close'], name='価格'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['sma_short'], mode='lines', name=f'SMA {params["short_window"]}'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['sma_long'], mode='lines', name=f'SMA {params["long_window"]}'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['sma_short'], mode='lines', name=f'EMA {params["short_window"]}'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['sma_long'], mode='lines', name=f'EMA {params["long_window"]}'), row=1, col=1)
         
+        if 'sma200' in data.columns:
+            fig.add_trace(go.Scatter(x=data.index, y=data['sma200'], mode='lines', name='200日平均', line=dict(dash='dot')), row=1, col=1)
+
         # Bollinger Bands
         fig.add_trace(go.Scatter(x=data.index, y=data['bbu'], mode='lines', line=dict(width=0.5), name='BB Upper', line_color='rgba(255,165,0,0.5)'), row=1, col=1)
         fig.add_trace(go.Scatter(x=data.index, y=data['bbl'], mode='lines', line=dict(width=0.5), name='BB Lower', fill='tonexty', fillcolor='rgba(255,165,0,0.2)', line_color='rgba(255,165,0,0.5)'), row=1, col=1)

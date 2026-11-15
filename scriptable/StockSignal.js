@@ -581,7 +581,7 @@ function buildResultTable(r) {
   info.addText("RSI / 乖離率", `${r.rsi.toFixed(1)} / ${r.deviation >= 0 ? "+" : ""}${r.deviation.toFixed(2)}%`);
   table.addRow(info);
 
-  for (const [label, res] of [["トレンドフォロー", r.trend], ["逆張り", r.counter], ["押し目候補", r.pullback]]) {
+  for (const [label, res] of [["トレンドフォロー", r.trend], ["逆張り", r.counter], ["押し目候補(参考)", r.pullback]]) {
     const row = new UITableRow();
     row.height = 60;
     const cell = row.addText(label, `${SIGNAL_EMOJI[res.signal]}  (score: ${res.score.toFixed(1)})`);
@@ -645,7 +645,7 @@ async function runWidget() {
     title.font = Font.boldSystemFont(16);
     widget.addSpacer(6);
 
-    for (const [label, res] of [["トレンド", r.trend], ["逆張り", r.counter], ["押し目", r.pullback]]) {
+    for (const [label, res] of [["トレンド", r.trend], ["逆張り", r.counter], ["押し目(参考)", r.pullback]]) {
       const row = widget.addStack();
       const l = row.addText(`${label}: `);
       l.textColor = Color.lightGray();

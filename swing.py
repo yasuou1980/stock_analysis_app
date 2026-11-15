@@ -32,9 +32,14 @@ SIGNAL_PARAMS = {
     "score_smooth_period": 3, "ema_slope_period": 5,
 }
 
-# 候補一覧に出す戦略 (表示順)。押し目候補を先頭にしているのは、検証で
-# 銘柄補正後もプラスが残った唯一の戦略のため
-SWING_STRATEGIES = ["押し目候補", "トレンドフォロー", "逆張り"]
+# 計算・表示する戦略 (表示順)
+SWING_STRATEGIES = ["トレンドフォロー", "逆張り", "押し目候補"]
+
+# 売買プランを付けない「参考・未検証」の戦略。押し目候補は設計時に見ていない期間
+# (2026-09-03〜) で 10日超過 -10.6pt (29件、実質2エピソード) と大きく負けたため、
+# 2026-11-11 のユーザー決定で「記録は続け、売買の判断には使わない」扱いにした
+# (docs/signal_accuracy_2026-07.md)。12/1 の事前登録の答え合わせで扱いを見直す
+REFERENCE_ONLY_STRATEGIES = frozenset({"押し目候補"})
 
 DEFAULT_SETTINGS = {
     "account_size": 10000.0,   # 資金 ($)
@@ -127,9 +132,12 @@ def scan_candidates(frames: dict, ticker_classes: dict, settings: dict) -> list[
 
     frames: {(ticker, strategy): calculate_indicators_and_signals の戻り値}
     戻り値は 戦略の表示順 → 新規発生が先 → 銘柄名 の順。
+    参考・未検証の戦略 (REFERENCE_ONLY_STRATEGIES) は含めない (reference_signals を使う)。
     """
     out = []
     for (ticker, strategy), data in frames.items():
+        if strategy in REFERENCE_ONLY_STRATEGIES:
+            continue
         if data is None or data.empty or "composite_signal" not in data.columns:
             continue
         streak = buy_streak(data["composite_signal"])
@@ -159,6 +167,41 @@ def scan_candidates(frames: dict, ticker_classes: dict, settings: dict) -> list[
     order = {s: i for i, s in enumerate(SWING_STRATEGIES)}
     out.sort(key=lambda c: (order.get(c["strategy"], len(order)), c["streak"], c["ticker"]))
     return out
+
+
+def reference_signals(frames: dict) -> list[dict]:
+    """参考・未検証の戦略で最新バーが BUY の銘柄 (売買プランは付けない)。新規発生が先 → 銘柄名の順。"""
+    out = []
+    for (ticker, strategy), data in frames.items():
+        if strategy not in REFERENCE_ONLY_STRATEGIES:
+            continue
+        if data is None or data.empty or "composite_signal" not in data.columns:
+            continue
+        streak = buy_streak(data["composite_signal"])
+        if streak == 0:
+            continue
+        latest = data.iloc[-1]
+        out.append({"ticker": ticker, "strategy": strategy, "streak": streak,
+                    "signal_date": pd.Timestamp(data.index[-1]).date(),
+                    "close": float(latest["close"]), "rsi": float(latest.get("rsi", np.nan))})
+    out.sort(key=lambda c: (c["strategy"], c["streak"], c["ticker"]))
+    return out
+
+
+def _state_label(streak: int) -> str:
+    return "新規" if streak == 1 else f"継続{streak}日目"
+
+
+def format_reference_text(refs: list[dict]) -> list[str]:
+    """日次レポートに追記する参考・未検証シグナルの行 (売買プランなし)。"""
+    lines = ["", "■ 参考・未検証 (売買プランなし。売買の判断には使わない)"]
+    if not refs:
+        lines.append("  該当なし")
+        return lines
+    for strategy in sorted({r["strategy"] for r in refs}):
+        names = [f"{r['ticker']}({_state_label(r['streak'])})" for r in refs if r["strategy"] == strategy]
+        lines.append(f"  ・{strategy}: " + ", ".join(names))
+    return lines
 
 
 def market_context(prices: dict, tickers=("SPY", "QQQ")) -> list[dict]:

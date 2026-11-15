@@ -15,7 +15,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
     if 'preset_choice' not in st.session_state:
         st.session_state.preset_choice = "スイングトレード"
     if 'strategy_type' not in st.session_state:
-        st.session_state.strategy_type = "押し目候補"
+        st.session_state.strategy_type = "トレンドフォロー"
 
     # --- UI Components ---
     ticker_choice = st.sidebar.selectbox("ティッカー", TICKERS, index=TICKERS.index(st.session_state.ticker) if st.session_state.ticker in TICKERS else 0)
@@ -26,7 +26,7 @@ def setup_sidebar(TICKERS, PRESETS, params_config):
         st.session_state.ticker = ticker_choice
         st.rerun()
 
-    _strategy_options = ["押し目候補", "トレンドフォロー", "逆張り", "レジーム切替"]
+    _strategy_options = ["トレンドフォロー", "逆張り", "押し目候補", "レジーム切替"]
     _strategy_idx = _strategy_options.index(st.session_state.strategy_type) if st.session_state.strategy_type in _strategy_options else 0
     strategy_type = st.sidebar.selectbox("戦略タイプ", _strategy_options, index=_strategy_idx)
     if strategy_type != st.session_state.strategy_type:

@@ -203,6 +203,8 @@ def save_to_text(results_dir: Path, run_date: str, rows: list[dict], errors: lis
     for strategy in STRATEGIES:
         sub = df[df["strategy"] == strategy].copy()
         lines.append(f"\n【{strategy}】")
+        if strategy == "押し目候補":
+            lines.append("  ※参考・未検証: 設計後の未知期間で不利な結果。売買の判断には使わない (docs 2026-11-11)")
         lines.append(f"  {'銘柄':<8} {'シグナル':<10} {'終値':>10}  {'RSI':>6}  {'乖離率':>8}")
         lines.append(f"  {'-' * 50}")
 
@@ -298,6 +300,7 @@ def run(dry_run: bool = False, no_db: bool = False) -> None:
     try:
         plan_lines = swing.format_candidates_text(
             swing.scan_candidates(frames, ticker_classes, swing_cfg), swing_cfg)
+        plan_lines += swing.format_reference_text(swing.reference_signals(frames))
     except Exception as e:
         logger.error(f"スイング候補の作成エラー: {e}", exc_info=True)
         plan_lines = []

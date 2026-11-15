@@ -195,6 +195,22 @@ def render_candidates(config: dict, settings: dict, prices: dict, frames: dict, 
         "手仕舞い予定日は米国の祝日を考慮していない目安です。"
     )
 
+    refs = swing.reference_signals(frames)
+    if refs:
+        st.subheader("参考・未検証 (売買プランなし)")
+        st.warning(
+            "押し目候補は、設計時に見ていない期間 (2026-09-03〜) で 10日後の成績が大きくマイナスでした "
+            "(29件、10月の相場全体の下落に一斉に巻き込まれた)。記録は続けていますが、売買の判断には使わないでください。"
+            "12/1 の答え合わせで扱いを見直します。")
+        st.dataframe(pd.DataFrame([{
+            "銘柄": r["ticker"], "戦略": r["strategy"],
+            "状態": "新規" if r["streak"] == 1 else f"継続 {r['streak']}日目",
+            "終値": r["close"], "RSI": r["rsi"],
+        } for r in refs]), column_config={
+            "終値": st.column_config.NumberColumn(format="$%.2f"),
+            "RSI": st.column_config.NumberColumn(format="%.1f"),
+        }, hide_index=True, use_container_width=True)
+
     _render_track_record()
 
     with st.expander("監視銘柄すべての状況"):

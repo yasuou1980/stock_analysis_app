@@ -97,12 +97,15 @@ def collect(prices: dict, config: dict) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
-def report(trades: pd.DataFrame, reps: int = 2000) -> pd.DataFrame:
+def report(trades: pd.DataFrame, reps: int = 2000, cost: float = 0.0) -> pd.DataFrame:
+    """cost: 片道の手数料・スリッページ (%)。ベースライン (毎日買い) は「持ち続けた場合」の
+    近似として手数料なしのまま比べ、戦略側の取引だけにコストを掛ける。"""
     key = ["k", "n", "target_r", "trail"]
     base = (trades[trades["strategy"] == "毎日買い"].groupby(key + ["ticker"])["ret_pct"].mean()
             .rename("base_ret"))
     d = trades[trades["strategy"] != "毎日買い"].join(base, on=key + ["ticker"])
     d["excess"] = d["ret_pct"] - d["base_ret"]
+    d["net_excess"] = swing.net_ret_pct(d["ret_pct"], cost) - d["base_ret"]
     rng = np.random.default_rng(0)
     rows = []
     for (strategy, k, n, target_r, trail), g in d.groupby(["strategy"] + key):
@@ -116,6 +119,8 @@ def report(trades: pd.DataFrame, reps: int = 2000) -> pd.DataFrame:
             "勝率%": (g["ret_pct"] > 0).mean() * 100, "平均%": g["ret_pct"].mean(),
             "差pt": g["excess"].mean(), "差95%下限": np.percentile(boot, 2.5), "差95%上限": np.percentile(boot, 97.5),
             "平均R": g["r_multiple"].mean(), "損切り率%": (g["reason"] == "stop").mean() * 100,
+            **({f"純差pt(片道{cost:g}%)": g["net_excess"].mean(),
+                "損益分岐(片道%)": max(g["excess"].mean() / 2, 0.0)} if cost else {}),
         })
     out = pd.DataFrame(rows)
     order = {s: i for i, s in enumerate(STRATEGIES)}
@@ -140,6 +145,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="スイング用売買プランの検証")
     parser.add_argument("--years", type=float, default=5.5, help="取得する年数 (先頭の約 200 営業日は指標の助走に使う)")
     parser.add_argument("--cache", type=Path, default=None, help="価格データの保存・再利用先 (pickle)")
+    parser.add_argument("--cost", type=float, default=0.0,
+                        help="片道の手数料・スリッページ (%%)。例: 0.1。0 ならコストなし (従来どおり)")
     args = parser.parse_args()
 
     config = toml.load(SCRIPT_DIR / "config.toml")
@@ -150,7 +157,7 @@ def main() -> None:
     span = trades["signal_date"].min().date(), trades["signal_date"].max().date()
     print(f"対象: {trades['ticker'].nunique()} 銘柄 / シグナル日 {span[0]} 〜 {span[1]}")
     print("\n■ ルール別 (差pt = 同じ銘柄を同じルールで毎日買った場合との差)")
-    print(report(trades).round(2).to_string(index=False))
+    print(report(trades, cost=args.cost).round(2).to_string(index=False))
     print("\n■ 年別の差pt と件数 (損切り ATR×2 / 10 日)")
     print(by_year(trades).round(2).to_string())
     base = trades[(trades["strategy"] == "毎日買い") & (trades["target_r"] == 0) & (~trades["trail"])]

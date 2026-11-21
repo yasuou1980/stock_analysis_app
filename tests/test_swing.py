@@ -259,3 +259,12 @@ def test_onset_bars_and_summary():
         "ret_pct": [4.0, -2.0], "r_multiple": [1.0, -1.0], "reason": ["time", "stop"]}))
     assert summary["n"] == 2 and summary["win_rate"] == 50.0 and summary["stop_rate"] == 50.0
     assert swing.summarize_trades(pd.DataFrame(columns=swing.TRADE_COLUMNS)) == {"n": 0}
+
+
+def test_net_ret_pct_applies_round_trip_cost():
+    # 片道 0.1%: 損益 0% の取引は約 -0.2% になる
+    assert swing.net_ret_pct(0.0, 0.1) == pytest.approx(-0.1998, abs=1e-4)
+    # +10% の取引は 1.1 × 0.999 / 1.001 − 1
+    assert swing.net_ret_pct(10.0, 0.1) == pytest.approx((1.1 * 0.999 / 1.001 - 1) * 100)
+    # コスト 0 なら変わらない。配列もそのまま扱える
+    assert list(swing.net_ret_pct([5.0, -3.0], 0.0)) == pytest.approx([5.0, -3.0])

@@ -329,6 +329,16 @@ def evaluate_position(prices: pd.DataFrame | None, position: dict, settings: dic
 # ---------------------------------------------------------------------------
 # 売買プランの過去シミュレーション
 # ---------------------------------------------------------------------------
+def net_ret_pct(gross_pct, cost_side_pct: float):
+    """往復の手数料・スリッページ込みの損益 (%)。
+
+    買いは (1 + c) 倍、売りは (1 - c) 倍で約定したとみなす (c = 片道コスト)。
+    片道 0.1% なら、損益 0% の取引は約 -0.2% になる。
+    """
+    c = cost_side_pct / 100.0
+    return ((1 + np.asarray(gross_pct, dtype=float) / 100.0) * (1 - c) / (1 + c) - 1) * 100.0
+
+
 TRADE_COLUMNS = ["signal_date", "entry_date", "entry", "stop", "exit_date", "exit", "reason",
                  "ret_pct", "r_multiple", "days"]
 
